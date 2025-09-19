@@ -1,0 +1,10 @@
+{
+  "video_url": "https://edream-storage-dreams-staging.s3.us-east-1.amazonaws.com/426ae4da-4bab-433d-ba72-a1806000aa86/82cad164-8d2d-4b8e-9c4d-22be4939a16c/82cad164-8d2d-4b8e-9c4d-22be4939a16c.avi",
+  "upscale_factor": 2,
+  "interpolation_factor": 2,
+  "output_fps": 30,
+  "output_format": "mp4",
+  "tile_size": 1024,
+  "tile_padding": 20,
+  "quality": "high"
+}
