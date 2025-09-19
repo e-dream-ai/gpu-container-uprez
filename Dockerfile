@@ -37,7 +37,7 @@ RUN pip install --no-cache-dir \
 RUN mkdir -p /opt/models/realesrgan /opt/models/rife /opt/app $TEMP_DIR
 
 # Download models
-RUN gdown --id 1gViYvvQrtETBgU1w8axZSsr7YUuw31uy -O /opt/models/rife/rife46.pth
+RUN gdown --id 1gViYvvQrtETBgU1w8axZSsr7YUuw31uy -O /opt/models/rife/rife4.26.pth
 RUN wget -nv -O /opt/models/realesrgan/RealESRGAN_x2plus.pth \
     https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth
 

@@ -65,9 +65,6 @@ docker build -t video-upscaler .
 
 3. New endpoint setup (if creating fresh)
    - Container Image: use the latest tag from the workflow output
-   - GPU: RTX 4090 or better (recommended)
-   - Memory: 16GB+ RAM
-   - Storage: 50GB+ for temporary processing
 
 ## Technical Details
 
