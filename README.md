@@ -48,15 +48,23 @@ docker build -t video-upscaler .
 
 ### RunPod Deployment
 
-1. Build and push to registry:
+1. Automatic build and push
 
-```bash
-docker build -t your-registry/video-upscaler:latest .
-docker push your-registry/video-upscaler:latest
-```
+   - Workflow: `.github/workflows/build-and-push.yml`
+   - Registry: `docker.io/edreamai/video-upscaler`
+   - Tags produced per build:
+     - `latest`
+     - Timestamped tag like `docker.io/edreamai/video-upscaler:YYYYMMDDHHMMSS-main[-custom]`
 
-2. Create RunPod serverless endpoint with:
-   - Container Image: `your-registry/video-upscaler:latest`
+2. Update your RunPod Serverless endpoint
+
+   - Open your existing Serverless endpoint in RunPod console
+   - Change the Container Image to the newly built tag printed in the GitHub Actions run summary
+   - Example: `docker.io/edreamai/video-upscaler:20250206-main`
+   - Save and redeploy
+
+3. New endpoint setup (if creating fresh)
+   - Container Image: use the latest tag from the workflow output
    - GPU: RTX 4090 or better (recommended)
    - Memory: 16GB+ RAM
    - Storage: 50GB+ for temporary processing
