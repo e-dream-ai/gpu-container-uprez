@@ -33,6 +33,10 @@ class ModelLoader:
         tile_size: int = 512, 
         tile_padding: int = 10
     ) -> Any:
+        if upscale_factor != 2:
+            logger.warning(f"Unsupported upscale_factor={upscale_factor}. Falling back to 2x.")
+            upscale_factor = 2
+
         model_key = f'realesrgan_x{upscale_factor}'
         
         if model_key in self.loaded_models:
@@ -44,27 +48,16 @@ class ModelLoader:
             from basicsr.archs.rrdbnet_arch import RRDBNet
             
             logger.info(f"Loading Real-ESRGAN model: {model_key}")
-            
-            if upscale_factor == 2:
-                model = RRDBNet(
-                    num_in_ch=3,
-                    num_out_ch=3,
-                    num_feat=64,
-                    num_block=23,
-                    num_grow_ch=32,
-                    scale=2
-                )
-                model_path = self.model_paths['realesrgan']
-            else:
-                model = RRDBNet(
-                    num_in_ch=3,
-                    num_out_ch=3,
-                    num_feat=64,
-                    num_block=23,
-                    num_grow_ch=32,
-                    scale=2
-                )
-                model_path = self.model_paths['realesrgan']
+
+            model = RRDBNet(
+                num_in_ch=3,
+                num_out_ch=3,
+                num_feat=64,
+                num_block=23,
+                num_grow_ch=32,
+                scale=2
+            )
+            model_path = self.model_paths['realesrgan']
             
             upsampler = RealESRGANer(
                 scale=2,

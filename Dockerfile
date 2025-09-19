@@ -31,7 +31,8 @@ RUN pip install --no-cache-dir \
     tqdm \
     basicsr \
     gfpgan \
-    realesrgan
+    realesrgan \
+    gdown
 
 # Create directories
 RUN mkdir -p /opt/models/realesrgan /opt/models/rife /opt/app $TEMP_DIR
