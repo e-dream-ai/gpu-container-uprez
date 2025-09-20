@@ -17,8 +17,17 @@ RUN apt-get update && apt-get install -y \
 
 RUN apt-get update && apt-get install -y \
     build-essential pkg-config automake autoconf libtool python3-dev git \
-    libffms2-dev libzimg-dev libpcre3-dev \
+    libpcre3-dev \
     && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/sekrit-twc/zimg.git /tmp/zimg \
+    && cd /tmp/zimg \
+    && ./autogen.sh \
+    && ./configure \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && cd .. && rm -rf /tmp/zimg
 
 RUN git clone https://github.com/vapoursynth/vapoursynth.git /tmp/vapoursynth \
     && cd /tmp/vapoursynth \
