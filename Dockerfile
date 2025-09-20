@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
 
 RUN apt-get update && apt-get install -y \
     build-essential pkg-config automake autoconf libtool python3-dev git \
-    libpcre3-dev \
+    libpcre3-dev cython3 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN wget https://github.com/sekrit-twc/zimg/archive/refs/tags/release-3.0.5.tar.gz -O /tmp/zimg.tar.gz \
