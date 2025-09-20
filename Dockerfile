@@ -18,6 +18,9 @@ RUN apt-get update && apt-get install -y \
 ## Upgrade pip first
 RUN pip install --upgrade pip setuptools wheel
 
+RUN conda install -y -c conda-forge vapoursynth=R66 ffms2 \
+    && conda clean -afy
+
 # Create directories
 RUN mkdir -p /opt/models/realesrgan /opt/app $TEMP_DIR
 

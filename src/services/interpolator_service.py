@@ -37,7 +37,6 @@ class InterpolatorService:
             import time
             start_time = time.time()
             
-            # Use vsrife with VapourSynth for efficient interpolation
             self._interpolate_with_vsrife(input_frames, output_dir, interpolation_factor, rife_function)
             
             total_time = time.time() - start_time
@@ -59,10 +58,8 @@ class InterpolatorService:
             import vapoursynth as vs
             from vsrife import rife
             
-            # Initialize VapourSynth core
             core = vs.core
             
-            # Create a temporary video from input frames to work with VapourSynth
             temp_video_path = self._create_temp_video_from_frames(input_frames)
             
             try:
@@ -82,7 +79,6 @@ class InterpolatorService:
                     device_index=0 if torch.cuda.is_available() else -1
                 )
                 
-                # Export interpolated frames
                 self._export_frames_from_clip(interpolated_clip, output_dir)
                 
             finally:
@@ -92,7 +88,6 @@ class InterpolatorService:
                     
         except Exception as e:
             logger.error(f"vsrife interpolation failed: {e}")
-            # Fallback to simple frame copying if vsrife fails
             self._fallback_frame_copy(input_frames, output_dir, interpolation_factor)
     
     def _create_temp_video_from_frames(self, input_frames: List[Path]) -> Path:
@@ -127,10 +122,9 @@ class InterpolatorService:
         with tqdm(total=frame_count, desc="Exporting frames") as pbar:
             for i in range(frame_count):
                 frame = clip.get_frame(i)
-                frame_array = np.asarray(frame[0])  # Get Y plane for RGB
+                frame_array = np.asarray(frame[0]) 
                 
-                # Convert VapourSynth frame to OpenCV format
-                if len(frame_array.shape) == 2:  # Grayscale
+                if len(frame_array.shape) == 2: 
                     frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_GRAY2BGR)
                 else:  # RGB
                     frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
@@ -145,17 +139,14 @@ class InterpolatorService:
         output_dir: Path,
         interpolation_factor: int
     ) -> None:
-        """Fallback method that simply copies frames with basic interpolation."""
         logger.warning("Using fallback frame copying (no actual interpolation)")
         
         output_frame_idx = 0
         for i, frame_path in enumerate(input_frames):
-            # Copy original frame
             self._copy_frame(frame_path, output_dir, output_frame_idx)
             output_frame_idx += 1
             
-            # Add duplicate frames to simulate interpolation
-            if i < len(input_frames) - 1:  # Don't add duplicates after last frame
+            if i < len(input_frames) - 1: 
                 for _ in range(interpolation_factor - 1):
                     self._copy_frame(frame_path, output_dir, output_frame_idx)
                     output_frame_idx += 1
