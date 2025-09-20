@@ -11,9 +11,12 @@ ENV TEMP_DIR=/tmp/video_processing
 
 # System dependencies (including VapourSynth dependencies)
 RUN apt-get update && apt-get install -y \
-    python3.11 python3-pip git wget ffmpeg libgl1 libglib2.0-0 \
-    vapoursynth vapoursynth-dev \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python \
+    software-properties-common \
+    python3 python3-pip git wget ffmpeg libgl1 libglib2.0-0 \
+    && add-apt-repository -y universe \
+    && apt-get update \
+    && apt-get install -y vapoursynth vapoursynth-dev python3-vapoursynth vapoursynth-plugin-ffms2 \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
     && ln -sf /usr/bin/pip3 /usr/bin/pip \
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
