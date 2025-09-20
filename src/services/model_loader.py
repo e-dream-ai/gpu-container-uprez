@@ -12,7 +12,8 @@ class ModelLoader:
         self.device = self._get_device()
         self.loaded_models: Dict[str, Any] = {}
         self.model_paths = {
-            'realesrgan': Path('/opt/models/realesrgan/RealESRGAN_x2plus.pth')
+            'realesrgan': Path('/opt/models/realesrgan/RealESRGAN_x2plus.pth'),
+            'rife': Path('/opt/models/rife/rife4.26.pth')
         }
         logger.info(f"ModelLoader initialized with device: {self.device}")
     
@@ -86,17 +87,25 @@ class ModelLoader:
             return self.loaded_models[model_key]
         
         try:
-            from vsrife import rife
+            import sys
+            sys.path.append('/opt/rife-repo')
             
-            logger.info("Loading RIFE model using vsrife")
-
-            self.loaded_models[model_key] = rife
-            logger.info("RIFE model loaded successfully using vsrife")
+            from model.RIFE_HDv3 import Model
             
-            return rife
+            logger.info("Loading RIFE model")
+            
+            model = Model()
+            model.load_model('/opt/models/rife', -1)
+            model.eval()
+            model.device()
+            
+            self.loaded_models[model_key] = model
+            logger.info("RIFE model loaded successfully")
+            
+            return model
             
         except Exception as e:
-            logger.error(f"Failed to load RIFE model with vsrife: {e}")
+            logger.error(f"Failed to load RIFE model: {e}")
             raise RuntimeError(f"RIFE model loading failed: {e}")
     
     def unload_model(self, model_key: str) -> None:

@@ -1,12 +1,10 @@
 import logging
 from pathlib import Path
-from typing import List, Any
+from typing import List
 import cv2
 import numpy as np
 import torch
 from tqdm import tqdm
-import tempfile
-import subprocess
 
 from services.model_loader import ModelLoader
 
@@ -28,116 +26,145 @@ class InterpolatorService:
             logger.warning("Need at least 2 frames for interpolation")
             return
         
-        logger.info(f"Interpolating {len(input_frames)} frames with factor {interpolation_factor}x using vsrife")
+        logger.info(f"Interpolating {len(input_frames)} frames with factor {interpolation_factor}x")
         
-        # Load the RIFE function from vsrife
-        rife_function = self.model_loader.load_rife_model()
+        rife_model = self.model_loader.load_rife_model()
         
         try:
             import time
             start_time = time.time()
             
-            # Use vsrife with VapourSynth for efficient interpolation
-            self._interpolate_with_vsrife(input_frames, output_dir, interpolation_factor, rife_function)
+            total_output_frames = self._calculate_output_frame_count(
+                len(input_frames), interpolation_factor
+            )
+            
+            with tqdm(total=total_output_frames, desc="Interpolating frames") as pbar:
+                output_frame_idx = 0
+                
+                for i in range(len(input_frames) - 1):
+                    current_frame = input_frames[i]
+                    next_frame = input_frames[i + 1]
+                    
+                    self._copy_frame(current_frame, output_dir, output_frame_idx)
+                    output_frame_idx += 1
+                    pbar.update(1)
+                    
+                    intermediate_frames = self._generate_intermediate_frames(
+                        current_frame, next_frame, rife_model, interpolation_factor
+                    )
+                    
+                    for intermediate_frame in intermediate_frames:
+                        output_path = output_dir / f"frame_{output_frame_idx:06d}.png"
+                        cv2.imwrite(str(output_path), intermediate_frame)
+                        output_frame_idx += 1
+                        pbar.update(1)
+                
+                self._copy_frame(input_frames[-1], output_dir, output_frame_idx)
+                pbar.update(1)
             
             total_time = time.time() - start_time
             logger.info(f"Interpolation completed in {total_time:.2f}s")
+            logger.info(f"Generated {total_output_frames} frames from {len(input_frames)} input frames")
             
         except Exception as e:
             logger.error(f"Frame interpolation failed: {e}")
             raise RuntimeError(f"Interpolation process failed: {e}")
     
-    def _interpolate_with_vsrife(
+    def _generate_intermediate_frames(
         self,
-        input_frames: List[Path],
-        output_dir: Path,
-        interpolation_factor: int,
-        rife_function: Any
-    ) -> None:
-        """Use vsrife with VapourSynth to interpolate frames efficiently."""
+        frame1_path: Path,
+        frame2_path: Path,
+        rife_model,
+        interpolation_factor: int
+    ) -> List[np.ndarray]:
+
         try:
-            import vapoursynth as vs
-            from vsrife import rife
+            frame1 = cv2.imread(str(frame1_path))
+            frame2 = cv2.imread(str(frame2_path))
             
-            # Initialize VapourSynth core
-            core = vs.core
+            if frame1 is None or frame2 is None:
+                logger.error(f"Could not load frames: {frame1_path}, {frame2_path}")
+                return []
             
-            # Create a temporary video from input frames to work with VapourSynth
-            temp_video_path = self._create_temp_video_from_frames(input_frames)
+            frame1_tensor = self._frame_to_tensor(frame1)
+            frame2_tensor = self._frame_to_tensor(frame2)
             
-            try:
-                clip = core.ffms2.Source(str(temp_video_path))
-                
-                interpolated_clip = rife_function(
-                    clip=clip,
-                    model=4,
-                    factor_num=interpolation_factor,
-                    factor_den=1,
-                    fps_num=None,
-                    fps_den=1,
-                    scene_thresh=0.15,
-                    skip=True,
-                    stat_th=60.0,
-                    auto_download=True,
-                    device_index=0 if torch.cuda.is_available() else -1
+            intermediate_frames = []
+            
+            if interpolation_factor == 2:
+                mid_frame = self._interpolate_single_frame(
+                    frame1_tensor, frame2_tensor, rife_model, 0.5
                 )
+                intermediate_frames.append(mid_frame)
                 
-                # Export interpolated frames
-                self._export_frames_from_clip(interpolated_clip, output_dir)
-                
-            finally:
-                # Clean up temporary video
-                if temp_video_path.exists():
-                    temp_video_path.unlink()
+            elif interpolation_factor == 4:
+                for t in [0.25, 0.5, 0.75]:
+                    mid_frame = self._interpolate_single_frame(
+                        frame1_tensor, frame2_tensor, rife_model, t
+                    )
+                    intermediate_frames.append(mid_frame)
                     
+            elif interpolation_factor == 8:
+                for t in [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]:
+                    mid_frame = self._interpolate_single_frame(
+                        frame1_tensor, frame2_tensor, rife_model, t
+                    )
+                    intermediate_frames.append(mid_frame)
+            
+            return intermediate_frames
+            
         except Exception as e:
-            logger.error(f"vsrife interpolation failed: {e}")
-            raise
+            logger.error(f"Failed to generate intermediate frames: {e}")
+            return []
     
-    def _create_temp_video_from_frames(self, input_frames: List[Path]) -> Path:
-        """Create a temporary video file from input frames for VapourSynth processing."""
-        temp_video = Path(tempfile.mktemp(suffix='.mp4'))
-        
-        # Use ffmpeg to create video from frames
-        frame_pattern = str(input_frames[0].parent / "frame_%06d.png")
-        cmd = [
-            'ffmpeg', '-y',
-            '-framerate', '30',  # Input framerate
-            '-i', frame_pattern,
-            '-c:v', 'libx264',
-            '-pix_fmt', 'yuv420p',
-            '-crf', '18',  # High quality
-            str(temp_video)
-        ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to create temp video: {result.stderr}")
-        
-        return temp_video
+    def _interpolate_single_frame(
+        self,
+        frame1_tensor: torch.Tensor,
+        frame2_tensor: torch.Tensor,
+        rife_model,
+        timestep: float
+    ) -> np.ndarray:
+        with torch.no_grad():
+            timestep_tensor = torch.tensor([timestep]).to(frame1_tensor.device).float()
+            
+            mid_frame_tensor = rife_model.inference(
+                frame1_tensor, frame2_tensor, timestep_tensor
+            )
+            
+            mid_frame = self._tensor_to_frame(mid_frame_tensor)
+            
+            return mid_frame
     
-    def _export_frames_from_clip(self, clip, output_dir: Path) -> None:
-        """Export frames from VapourSynth clip to output directory."""
-        import vapoursynth as vs
+    def _frame_to_tensor(self, frame: np.ndarray) -> torch.Tensor:
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        frame_count = clip.num_frames
-        logger.info(f"Exporting {frame_count} interpolated frames")
+        frame_tensor = torch.from_numpy(frame_rgb.astype(np.float32) / 255.0)
         
-        with tqdm(total=frame_count, desc="Exporting frames") as pbar:
-            for i in range(frame_count):
-                frame = clip.get_frame(i)
-                frame_array = np.asarray(frame[0])  # Get Y plane for RGB
-                
-                # Convert VapourSynth frame to OpenCV format
-                if len(frame_array.shape) == 2:  # Grayscale
-                    frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_GRAY2BGR)
-                else:  # RGB
-                    frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
-                
-                output_path = output_dir / f"frame_{i:06d}.png"
-                cv2.imwrite(str(output_path), frame_bgr)
-                pbar.update(1)
+        frame_tensor = frame_tensor.permute(2, 0, 1).unsqueeze(0)
+        
+        if torch.cuda.is_available():
+            frame_tensor = frame_tensor.cuda()
+        
+        return frame_tensor
     
+    def _tensor_to_frame(self, tensor: torch.Tensor) -> np.ndarray:
+       
+        frame_tensor = tensor.squeeze(0).cpu()
+        
+        frame_tensor = frame_tensor.permute(1, 2, 0)
+        
+        frame_np = (frame_tensor.numpy() * 255.0).astype(np.uint8)
+        
+        frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+        
+        return frame_bgr
+    
+    def _copy_frame(self, source_path: Path, output_dir: Path, frame_idx: int) -> None:
+        output_path = output_dir / f"frame_{frame_idx:06d}.png"
+        
+        frame = cv2.imread(str(source_path))
+        if frame is not None:
+            cv2.imwrite(str(output_path), frame)
     
     def _calculate_output_frame_count(self, input_count: int, interpolation_factor: int) -> int:
         if input_count < 2:
