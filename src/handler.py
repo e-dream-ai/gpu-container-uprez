@@ -23,11 +23,13 @@ INPUT_SCHEMA = {
     'video_url': {
         'type': str,
         'required': False,
+        'default': None,
         'description': 'URL of the input video to process'
     },
     'video_path': {
         'type': str,
         'required': False,
+        'default': None,
         'description': 'Local path to input video file'
     },
     'upscale_factor': {
@@ -78,6 +80,30 @@ INPUT_SCHEMA = {
         'default': 'high',
         'constraints': lambda x: x in ['low', 'medium', 'high'],
         'description': 'Output quality preset'
+    },
+    'output_name': {
+        'type': str,
+        'required': False,
+        'default': None,
+        'description': 'Output filename (optional)'
+    },
+    'input_file_path': {
+        'type': str,
+        'required': False,
+        'default': None,
+        'description': 'Path to input file (optional)'
+    },
+    'custom_output_path': {
+        'type': str,
+        'required': False,
+        'default': None,
+        'description': 'Custom output path (optional)'
+    },
+    'runpod_id': {
+        'type': str,
+        'required': False,
+        'default': None,
+        'description': 'RunPod job ID (optional)'
     }
 }
 
@@ -145,13 +171,16 @@ def upload_output_video(video_path: Path) -> str:
 
 
 def get_input_video_path(params: Dict[str, Any], temp_dir: Path) -> Path:
-    if 'video_url' in params and params['video_url']:
-        return download_input_video(params['video_url'], temp_dir)
-    elif 'video_path' in params and params['video_path']:
-        video_path = Path(params['video_path'])
-        if not video_path.exists():
-            raise FileNotFoundError(f"Video file not found: {video_path}")
-        return video_path
+    video_url = params.get('video_url')
+    video_path = params.get('video_path')
+    
+    if video_url and video_url.strip():
+        return download_input_video(video_url, temp_dir)
+    elif video_path and video_path.strip():
+        video_path_obj = Path(video_path)
+        if not video_path_obj.exists():
+            raise FileNotFoundError(f"Video file not found: {video_path_obj}")
+        return video_path_obj
     else:
         raise ValueError("Either 'video_url' or 'video_path' must be provided")
 
@@ -160,7 +189,8 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     cleanup_manager = CleanupManager()
     
     try:
-        validated = validate(job, INPUT_SCHEMA)
+        _input = job.get("input") or {}
+        validated = validate(_input, INPUT_SCHEMA)
         
         if validated.get('errors'):
             return {'error': f"Input validation failed: {validated['errors']}"}
