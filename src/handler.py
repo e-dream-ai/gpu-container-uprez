@@ -110,10 +110,14 @@ INPUT_SCHEMA = {
 
 def download_input_video(video_url: str, temp_dir: Path) -> Path:
     import requests
+    from urllib.parse import urlparse
     
     logger.info(f"Downloading video from: {video_url}")
     
-    file_ext = Path(video_url).suffix or '.mp4'
+    parsed_url = urlparse(video_url)
+    url_path = parsed_url.path
+    
+    file_ext = Path(url_path).suffix or '.mp4'
     input_path = temp_dir / f"input{file_ext}"
     
     try:
