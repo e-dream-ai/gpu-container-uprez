@@ -32,6 +32,7 @@ RUN wget https://github.com/sekrit-twc/zimg/archive/refs/tags/release-3.0.5.tar.
 
 RUN git clone https://github.com/vapoursynth/vapoursynth.git /tmp/vapoursynth \
     && cd /tmp/vapoursynth \
+    && git checkout R66 \
     && ./autogen.sh \
     && ./configure \
     && make -j$(nproc) \
