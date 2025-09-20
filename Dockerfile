@@ -37,19 +37,17 @@ RUN pip install --no-cache-dir \
 # Create directories
 RUN mkdir -p /opt/models/realesrgan /opt/models/rife /opt/app $TEMP_DIR
 
-# Download models
-RUN gdown --id 1gViYvvQrtETBgU1w8axZSsr7YUuw31uy -O /opt/models/rife/rife4.26.pth
+# Download Real-ESRGAN weights only (RIFE code/weights are vendored locally)
 RUN wget -nv -O /opt/models/realesrgan/RealESRGAN_x2plus.pth \
     https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth
-
-WORKDIR /opt
-RUN git clone https://github.com/vladmandic/rife.git rife-repo
 
 # Set working directory
 WORKDIR /opt/app
 
 # Copy application code
 COPY src/ ./src/
+COPY src/vendor/rife/model /opt/app/src/vendor/rife/model
+COPY models/ /opt/models/
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 

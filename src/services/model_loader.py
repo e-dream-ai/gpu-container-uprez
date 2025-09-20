@@ -12,8 +12,7 @@ class ModelLoader:
         self.device = self._get_device()
         self.loaded_models: Dict[str, Any] = {}
         self.model_paths = {
-            'realesrgan': Path('/opt/models/realesrgan/RealESRGAN_x2plus.pth'),
-            'rife': Path('/opt/models/rife/rife4.26.pth')
+            'realesrgan': Path('/opt/models/realesrgan/RealESRGAN_x2plus.pth')
         }
         logger.info(f"ModelLoader initialized with device: {self.device}")
     
@@ -88,61 +87,38 @@ class ModelLoader:
         
         try:
             import sys
-            sys.path.append('/opt/rife-repo')
-            
+            # Prefer vendored RIFE code inside the app image
+            sys.path.insert(0, '/opt/app/src/vendor/rife')
             from model.RIFE_HDv3 import Model
             
             logger.info("Loading RIFE model")
             
             model = Model()
 
-            weights_root = Path('/opt/models/rife')
-            train_log_runtime = weights_root / 'train_log'
-            repo_train_log = Path('/opt/rife-repo/train_log')
+            vendored_root = Path('/opt/app/src/vendor/rife/model')
+            external_root = Path('/opt/models/rife')
 
             weight_path: Path | None = None
 
-            try:
-                import zipfile
-                zip_candidates = list(weights_root.glob('*.zip'))
-                for zip_file in zip_candidates:
-                    with zipfile.ZipFile(zip_file, 'r') as zf:
-                        # Extract into /opt/models/rife/train_log
-                        logger.info(f"Extracting RIFE weights from zip: {zip_file}")
-                        train_log_runtime.mkdir(parents=True, exist_ok=True)
-                        zf.extractall(train_log_runtime)
-                        # If zip contains nested 'train_log', flatten once
-                        nested = train_log_runtime / 'train_log'
-                        if nested.exists() and nested.is_dir():
-                            for item in nested.iterdir():
-                                target = train_log_runtime / item.name
-                                if not target.exists():
-                                    item.rename(target)
-                            nested.rmdir()
-                    # keep first zip only
-                    break
-            except Exception as zip_err:
-                logger.warning(f"Failed to extract RIFE zip: {zip_err}")
-
-            if train_log_runtime.is_dir():
-                weight_path = train_log_runtime
-                logger.info(f"Using RIFE train_log from runtime: {weight_path}")
-            else:
-                # Look for a direct weight file in /opt/models/rife
-                candidate_files = list(weights_root.glob('*.pkl')) + list(weights_root.glob('*.pth'))
-                if candidate_files:
-                    # Prefer .pkl (ECCV2022) over .pth (Practical-RIFE) if both present
-                    pkl_files = [p for p in candidate_files if p.suffix == '.pkl']
-                    weight_path = (pkl_files[0] if pkl_files else candidate_files[0])
+            for root in [vendored_root, external_root]:
+                if (root / 'flownet-v46.pkl').is_file():
+                    weight_path = root / 'flownet-v46.pkl'
                     logger.info(f"Using RIFE weight file: {weight_path}")
-                elif repo_train_log.is_dir():
-                    weight_path = repo_train_log
-                    logger.info(f"Using RIFE train_log from repo: {weight_path}")
+                    break
 
             if weight_path is None:
-                raise FileNotFoundError("No RIFE weights found. Provide train_log/ or a .pkl/.pth file under /opt/models/rife")
+                for root in [vendored_root, external_root]:
+                    candidates = list(root.glob('*.pkl')) + list(root.glob('*.pth'))
+                    if candidates:
+                        pkl_files = [p for p in candidates if p.suffix == '.pkl']
+                        weight_path = (pkl_files[0] if pkl_files else candidates[0])
+                        logger.info(f"Using RIFE weight file: {weight_path}")
+                        break
 
-            # Model.load_model supports both a directory (train_log) and a direct file in some forks.
+            if weight_path is None:
+                raise FileNotFoundError("No RIFE weights found. Place a .pkl/.pth under src/vendor/rife/model or /opt/models/rife")
+
+            # Load direct checkpoint file
             model.load_model(str(weight_path), -1)
             model.eval()
             model.device()
