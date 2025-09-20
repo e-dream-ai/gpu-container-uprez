@@ -20,14 +20,15 @@ RUN apt-get update && apt-get install -y \
     libpcre3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/sekrit-twc/zimg.git /tmp/zimg \
-    && cd /tmp/zimg \
+RUN wget https://github.com/sekrit-twc/zimg/archive/refs/tags/release-3.0.5.tar.gz -O /tmp/zimg.tar.gz \
+    && tar -xzf /tmp/zimg.tar.gz -C /tmp \
+    && cd /tmp/zimg-release-3.0.5 \
     && ./autogen.sh \
     && ./configure \
     && make -j$(nproc) \
     && make install \
     && ldconfig \
-    && cd .. && rm -rf /tmp/zimg
+    && cd .. && rm -rf /tmp/zimg*
 
 RUN git clone https://github.com/vapoursynth/vapoursynth.git /tmp/vapoursynth \
     && cd /tmp/vapoursynth \
