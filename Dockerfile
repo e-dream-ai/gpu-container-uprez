@@ -47,7 +47,6 @@ WORKDIR /opt/app
 # Copy application code
 COPY src/ ./src/
 COPY src/vendor/rife/model /opt/app/src/vendor/rife/model
-COPY models/ /opt/models/
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
