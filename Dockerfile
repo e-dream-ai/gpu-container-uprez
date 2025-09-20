@@ -9,13 +9,9 @@ ENV PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync
 ENV MODEL_CACHE_DIR=/opt/models
 ENV TEMP_DIR=/tmp/video_processing
 
-# System dependencies (including VapourSynth dependencies)
 RUN apt-get update && apt-get install -y \
     software-properties-common \
     python3 python3-pip git wget ffmpeg libgl1 libglib2.0-0 \
-    && add-apt-repository -y universe \
-    && apt-get update \
-    && apt-get install -y vapoursynth vapoursynth-dev python3-vapoursynth vapoursynth-plugin-ffms2 \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && ln -sf /usr/bin/pip3 /usr/bin/pip \
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
@@ -25,16 +21,19 @@ RUN mkdir -p /opt/models/realesrgan /opt/app $TEMP_DIR
 RUN wget -nv -O /opt/models/realesrgan/RealESRGAN_x2plus.pth \
     https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth
 
-# Set working directory
 WORKDIR /opt/app
 
-# Copy requirements and install Python dependencies
+# Copy and install Python dependencies
 COPY requirements.txt ./
-RUN pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu126
+
+# Torch separately (faster & avoids pip re-resolve issues)
+RUN pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 \
+    --index-url https://download.pytorch.org/whl/cu126
+
+# Install everything else (including VapourSynth from pip)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY src/ ./src/
 
-# Set entrypoint
 CMD ["python", "-u", "src/handler.py"]
