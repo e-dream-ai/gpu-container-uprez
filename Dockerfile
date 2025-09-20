@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+FROM pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime
 
 # Environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -9,16 +9,13 @@ ENV PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync
 ENV MODEL_CACHE_DIR=/opt/models
 ENV TEMP_DIR=/tmp/video_processing
 
-# System dependencies
+## System dependencies
 RUN apt-get update && apt-get install -y \
-    python3.10 python3-pip python3.10-dev \
     git wget ffmpeg libgl1 libglib2.0-0 \
-    build-essential cmake pkg-config \
-    && ln -sf /usr/bin/python3.10 /usr/bin/python \
-    && ln -sf /usr/bin/pip3 /usr/bin/pip \
+    build-essential cmake pkg-config python3-dev \
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip first
+## Upgrade pip first
 RUN pip install --upgrade pip setuptools wheel
 
 # Create directories
