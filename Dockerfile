@@ -42,9 +42,8 @@ RUN gdown --id 1gViYvvQrtETBgU1w8axZSsr7YUuw31uy -O /opt/models/rife/rife4.26.pt
 RUN wget -nv -O /opt/models/realesrgan/RealESRGAN_x2plus.pth \
     https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth
 
-# Clone RIFE repository for inference code
 WORKDIR /opt
-RUN git clone https://github.com/megvii-research/ECCV2022-RIFE.git rife-repo
+RUN git clone https://github.com/vladmandic/rife.git rife-repo
 
 # Set working directory
 WORKDIR /opt/app
