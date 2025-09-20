@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Any
 import cv2
 import numpy as np
 import torch
@@ -37,6 +37,7 @@ class InterpolatorService:
             import time
             start_time = time.time()
             
+            # Use vsrife with VapourSynth for efficient interpolation
             self._interpolate_with_vsrife(input_frames, output_dir, interpolation_factor, rife_function)
             
             total_time = time.time() - start_time
@@ -58,8 +59,10 @@ class InterpolatorService:
             import vapoursynth as vs
             from vsrife import rife
             
+            # Initialize VapourSynth core
             core = vs.core
             
+            # Create a temporary video from input frames to work with VapourSynth
             temp_video_path = self._create_temp_video_from_frames(input_frames)
             
             try:
@@ -79,6 +82,7 @@ class InterpolatorService:
                     device_index=0 if torch.cuda.is_available() else -1
                 )
                 
+                # Export interpolated frames
                 self._export_frames_from_clip(interpolated_clip, output_dir)
                 
             finally:
@@ -88,7 +92,7 @@ class InterpolatorService:
                     
         except Exception as e:
             logger.error(f"vsrife interpolation failed: {e}")
-            self._fallback_frame_copy(input_frames, output_dir, interpolation_factor)
+            raise
     
     def _create_temp_video_from_frames(self, input_frames: List[Path]) -> Path:
         """Create a temporary video file from input frames for VapourSynth processing."""
@@ -122,9 +126,10 @@ class InterpolatorService:
         with tqdm(total=frame_count, desc="Exporting frames") as pbar:
             for i in range(frame_count):
                 frame = clip.get_frame(i)
-                frame_array = np.asarray(frame[0]) 
+                frame_array = np.asarray(frame[0])  # Get Y plane for RGB
                 
-                if len(frame_array.shape) == 2: 
+                # Convert VapourSynth frame to OpenCV format
+                if len(frame_array.shape) == 2:  # Grayscale
                     frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_GRAY2BGR)
                 else:  # RGB
                     frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
@@ -133,30 +138,6 @@ class InterpolatorService:
                 cv2.imwrite(str(output_path), frame_bgr)
                 pbar.update(1)
     
-    def _fallback_frame_copy(
-        self,
-        input_frames: List[Path],
-        output_dir: Path,
-        interpolation_factor: int
-    ) -> None:
-        logger.warning("Using fallback frame copying (no actual interpolation)")
-        
-        output_frame_idx = 0
-        for i, frame_path in enumerate(input_frames):
-            self._copy_frame(frame_path, output_dir, output_frame_idx)
-            output_frame_idx += 1
-            
-            if i < len(input_frames) - 1: 
-                for _ in range(interpolation_factor - 1):
-                    self._copy_frame(frame_path, output_dir, output_frame_idx)
-                    output_frame_idx += 1
-    
-    def _copy_frame(self, source_path: Path, output_dir: Path, frame_idx: int) -> None:
-        output_path = output_dir / f"frame_{frame_idx:06d}.png"
-        
-        frame = cv2.imread(str(source_path))
-        if frame is not None:
-            cv2.imwrite(str(output_path), frame)
     
     def _calculate_output_frame_count(self, input_count: int, interpolation_factor: int) -> int:
         if input_count < 2:
