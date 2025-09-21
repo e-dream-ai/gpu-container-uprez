@@ -197,7 +197,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         validated = validate(_input, INPUT_SCHEMA)
         
         if validated.get('errors'):
-            return {'error': f"Input validation failed: {validated['errors']}"}
+            raise ValueError(f"Input validation failed: {validated['errors']}")
         
         params = validated['validated_input']
         logger.info(f"Processing video with parameters: {params}")
@@ -238,10 +238,8 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"Processing failed: {e}", exc_info=True)
-        return {
-            'status': 'error',
-            'error': str(e)
-        }
+        # Raising an exception ensures the RunPod job is marked as FAILED
+        raise
     
     finally:
         cleanup_manager.cleanup_all()

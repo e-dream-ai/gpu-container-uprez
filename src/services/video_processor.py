@@ -39,7 +39,8 @@ class VideoProcessorService:
         
         try:
             logger.info("Step 1: Extracting frames from input video")
-            original_frames_dir = self.frame_manager.extract_frames(input_path)
+            extraction_fps = max(1.0, float(output_fps) / float(max(1, interpolation_factor)))
+            original_frames_dir = self.frame_manager.extract_frames(input_path, fps=extraction_fps)
             original_frame_paths = self.frame_manager.get_frame_paths(original_frames_dir)
             
             logger.info(f"Extracted {len(original_frame_paths)} frames")
@@ -77,12 +78,10 @@ class VideoProcessorService:
             logger.info("Step 4: Encoding final video")
             output_path = self.temp_dir / f"output.{output_format}"
             
-            effective_fps = output_fps * interpolation_factor
-            
             self.frame_manager.encode_video(
                 frame_dir=interpolated_frames_dir,
                 output_path=output_path,
-                fps=effective_fps,
+                fps=output_fps,
                 format=output_format,
                 quality=quality
             )

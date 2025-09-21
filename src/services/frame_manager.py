@@ -14,7 +14,7 @@ class FrameManager:
         self.cleanup_manager = cleanup_manager
         logger.info("FrameManager initialized")
     
-    def extract_frames(self, video_path: Path, output_dir: Optional[Path] = None) -> Path:
+    def extract_frames(self, video_path: Path, output_dir: Optional[Path] = None, fps: Optional[float] = None) -> Path:
 
         if output_dir is None:
             output_dir = self.temp_dir / "frames_original"
@@ -27,14 +27,29 @@ class FrameManager:
         try:
             logger.info(f"Extracting frames from {video_path}")
             
-            (
-                ffmpeg
-                .input(str(video_path))
-                .output(
-                    str(frame_pattern),
-                    vf='fps=fps=30',
-                    pix_fmt='rgb24'
+            input_stream = ffmpeg.input(str(video_path))
+            if fps is not None:
+                output_stream = (
+                    ffmpeg
+                    .output(
+                        input_stream,
+                        str(frame_pattern),
+                        vf=f'fps=fps={fps}',
+                        pix_fmt='rgb24'
+                    )
                 )
+            else:
+                output_stream = (
+                    ffmpeg
+                    .output(
+                        input_stream,
+                        str(frame_pattern),
+                        pix_fmt='rgb24'
+                    )
+                )
+
+            (
+                output_stream
                 .overwrite_output()
                 .run(capture_stdout=True, capture_stderr=True)
             )
@@ -118,7 +133,7 @@ class FrameManager:
         
         if format == 'mp4':
             return {
-                'vcodec': 'libx264',
+                'vcodec': 'libx265',
                 'pix_fmt': 'yuv420p',
                 'crf': settings['crf'],
                 'preset': settings['preset']
@@ -132,13 +147,13 @@ class FrameManager:
             }
         elif format == 'avi':
             return {
-                'vcodec': 'libx264',
+                'vcodec': 'libx265',
                 'pix_fmt': 'yuv420p',
                 'crf': settings['crf']
             }
         else:
             return {
-                'vcodec': 'libx264',
+                'vcodec': 'libx265',
                 'pix_fmt': 'yuv420p',
                 'crf': settings['crf'],
                 'preset': settings['preset']
