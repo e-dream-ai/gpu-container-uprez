@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 import torch
@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 class InterpolatorService:
     def __init__(self, model_loader: ModelLoader):
         self.model_loader = model_loader
+        self._target_size: Optional[Tuple[int, int]] = None
+        self._output_size: Optional[Tuple[int, int]] = None
         logger.info("InterpolatorService initialized")
     
     def interpolate_frames(
@@ -34,6 +36,20 @@ class InterpolatorService:
             import time
             start_time = time.time()
             
+            self._target_size = self._determine_safe_size(input_frames)
+            if self._target_size is None:
+                raise RuntimeError("Failed to determine a safe target size for interpolation")
+            logger.info(f"Using target frame size (HxW): {self._target_size[0]}x{self._target_size[1]}")
+
+            try:
+                first_img = cv2.imread(str(input_frames[0]))
+                if first_img is not None:
+                    h0, w0 = first_img.shape[:2]
+                    self._output_size = (h0, w0)
+                    logger.info(f"Using output frame size (HxW): {h0}x{w0}")
+            except Exception:
+                self._output_size = None
+
             total_output_frames = self._calculate_output_frame_count(
                 len(input_frames), interpolation_factor
             )
@@ -85,7 +101,13 @@ class InterpolatorService:
             if frame1 is None or frame2 is None:
                 logger.error(f"Could not load frames: {frame1_path}, {frame2_path}")
                 return []
-            
+
+            if self._target_size is None:
+                raise RuntimeError("Target size not initialized before generating intermediate frames")
+            target_h, target_w = self._target_size
+            frame1 = self._fit_to_size(frame1, target_h, target_w)
+            frame2 = self._fit_to_size(frame2, target_h, target_w)
+
             frame1_tensor = self._frame_to_tensor(frame1)
             frame2_tensor = self._frame_to_tensor(frame2)
             
@@ -95,6 +117,9 @@ class InterpolatorService:
                 mid_frame = self._interpolate_single_frame(
                     frame1_tensor, frame2_tensor, rife_model, 0.5
                 )
+                if self._output_size is not None:
+                    out_h, out_w = self._output_size
+                    mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
                 intermediate_frames.append(mid_frame)
                 
             elif interpolation_factor == 4:
@@ -102,6 +127,9 @@ class InterpolatorService:
                     mid_frame = self._interpolate_single_frame(
                         frame1_tensor, frame2_tensor, rife_model, t
                     )
+                    if self._output_size is not None:
+                        out_h, out_w = self._output_size
+                        mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
                     intermediate_frames.append(mid_frame)
                     
             elif interpolation_factor == 8:
@@ -109,6 +137,9 @@ class InterpolatorService:
                     mid_frame = self._interpolate_single_frame(
                         frame1_tensor, frame2_tensor, rife_model, t
                     )
+                    if self._output_size is not None:
+                        out_h, out_w = self._output_size
+                        mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
                     intermediate_frames.append(mid_frame)
             
             return intermediate_frames
@@ -164,6 +195,10 @@ class InterpolatorService:
         
         frame = cv2.imread(str(source_path))
         if frame is not None:
+            # Ensure copied frames match the intended output size
+            if self._output_size is not None:
+                out_h, out_w = self._output_size
+                frame = self._resize_to_exact(frame, out_h, out_w)
             cv2.imwrite(str(output_path), frame)
     
     def _calculate_output_frame_count(self, input_count: int, interpolation_factor: int) -> int:
@@ -172,3 +207,85 @@ class InterpolatorService:
         
         intermediate_count = (input_count - 1) * (interpolation_factor - 1)
         return input_count + intermediate_count
+
+    def _determine_safe_size(self, frames: List[Path]) -> Optional[Tuple[int, int]]:
+        max_h: Optional[int] = None
+        max_w: Optional[int] = None
+        for frame_path in frames:
+            img = cv2.imread(str(frame_path))
+            if img is None:
+                continue
+            h, w = img.shape[:2]
+            if max_h is None or h > max_h:
+                max_h = h
+            if max_w is None or w > max_w:
+                max_w = w
+        if max_h is None or max_w is None:
+            return None
+        def ceil_to_multiple(value: int, multiple: int) -> int:
+            return ((value + multiple - 1) // multiple) * multiple
+        safe_h = max(64, ceil_to_multiple(max_h, 64))
+        safe_w = max(64, ceil_to_multiple(max_w, 64))
+        return (safe_h, safe_w)
+
+    def _fit_to_size(self, img: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
+        h, w = img.shape[:2]
+        # If already correct size, return as is
+        if h == target_h and w == target_w:
+            return img
+        top = 0
+        left = 0
+        bottom = h
+        right = w
+        if h > target_h:
+            crop_top = (h - target_h) // 2
+            top = crop_top
+            bottom = crop_top + target_h
+        if w > target_w:
+            crop_left = (w - target_w) // 2
+            left = crop_left
+            right = crop_left + target_w
+        cropped = img[top:bottom, left:right]
+        ch, cw = cropped.shape[:2]
+        # Pad if smaller
+        pad_top = max(0, (target_h - ch) // 2)
+        pad_bottom = max(0, target_h - ch - pad_top)
+        pad_left = max(0, (target_w - cw) // 2)
+        pad_right = max(0, target_w - cw - pad_left)
+        if pad_top or pad_bottom or pad_left or pad_right:
+            cropped = cv2.copyMakeBorder(
+                cropped,
+                pad_top,
+                pad_bottom,
+                pad_left,
+                pad_right,
+                borderType=cv2.BORDER_REPLICATE
+            )
+        return cropped
+
+    def _resize_to_exact(self, img: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
+        h, w = img.shape[:2]
+        if h == target_h and w == target_w:
+            return img
+        # Crop to target window
+        top = max(0, (h - target_h) // 2)
+        left = max(0, (w - target_w) // 2)
+        bottom = min(h, top + target_h)
+        right = min(w, left + target_w)
+        cropped = img[top:bottom, left:right]
+        ch, cw = cropped.shape[:2]
+        # Pad to reach exact dims
+        pad_top = max(0, (target_h - ch) // 2)
+        pad_bottom = max(0, target_h - ch - pad_top)
+        pad_left = max(0, (target_w - cw) // 2)
+        pad_right = max(0, target_w - cw - pad_left)
+        if pad_top or pad_bottom or pad_left or pad_right:
+            cropped = cv2.copyMakeBorder(
+                cropped,
+                pad_top,
+                pad_bottom,
+                pad_left,
+                pad_right,
+                borderType=cv2.BORDER_REPLICATE
+            )
+        return cropped
