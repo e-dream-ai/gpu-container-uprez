@@ -136,7 +136,9 @@ class FrameManager:
                 'vcodec': 'libx265',
                 'pix_fmt': 'yuv420p',
                 'crf': settings['crf'],
-                'preset': settings['preset']
+                'preset': settings['preset'],
+                'movflags': '+faststart',
+                'vtag': 'hvc1'
             }
         elif format == 'webm':
             return {
