@@ -3,15 +3,14 @@ import tempfile
 import logging
 from typing import Dict, Any
 from pathlib import Path
-
 import runpod
 import uuid
 import boto3
 from botocore.config import Config as BotoConfig
 from runpod.serverless.utils.rp_validator import validate
-
 from services.video_processor import VideoProcessorService
 from utils.cleanup_manager import CleanupManager
+from edream_sdk.client import create_edream_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,12 +18,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+BACKEND_URL = os.getenv("BACKEND_URL")
+BACKEND_API_KEY = os.getenv("BACKEND_API_KEY")
+edream_client = None
+if BACKEND_URL and BACKEND_API_KEY:
+    edream_client = create_edream_client(backend_url=BACKEND_URL, api_key=BACKEND_API_KEY)
+else:
+    logger.warning("BACKEND_URL or BACKEND_API_KEY not set; video_uuid will be unsupported.")
+
 INPUT_SCHEMA = {
     'video_url': {
         'type': str,
         'required': False,
         'default': None,
         'description': 'URL of the input video to process'
+    },
+    'video_uuid': {
+        'type': str,
+        'required': False,
+        'default': None,
+        'description': 'Dream UUID to fetch original video from backend'
     },
     'video_path': {
         'type': str,
@@ -137,6 +150,40 @@ def download_input_video(video_url: str, temp_dir: Path) -> Path:
         raise RuntimeError(f"Video download failed: {e}")
 
 
+def download_input_video_from_r2_key(object_key: str, temp_dir: Path) -> Path:
+    bucket_name = os.environ.get("R2_BUCKET_NAME")
+    endpoint_url = os.environ.get("R2_ENDPOINT_URL")
+    r2_key = os.environ.get("R2_ACCESS_KEY_ID")
+    r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
+
+    if not bucket_name or not endpoint_url or not r2_key or not r2_secret:
+        raise RuntimeError("Missing R2 credentials (bucket/endpoint/key/secret) for private download")
+
+    # Normalize key
+    key = object_key.lstrip("/")
+    file_ext = Path(key).suffix or '.mp4'
+    input_path = temp_dir / f"input{file_ext}"
+
+    logger.info(f"Downloading from r2://{bucket_name}/{key}")
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id=r2_key,
+        aws_secret_access_key=r2_secret,
+        region_name="auto",
+        config=BotoConfig(s3={"addressing_style": "path"})
+    )
+
+    try:
+        s3.download_file(bucket_name, key, str(input_path))
+        logger.info(f"R2 download completed: {input_path}")
+        return input_path
+    except Exception as e:
+        logger.error(f"Failed to download from R2: {e}")
+        raise RuntimeError(f"R2 download failed: {e}")
+
+
 def upload_output_video(video_path: Path) -> str:
     """Upload processed video to R2 and return a presigned download URL."""
     logger.info(f"Preparing upload for: {video_path}")
@@ -175,18 +222,37 @@ def upload_output_video(video_path: Path) -> str:
 
 
 def get_input_video_path(params: Dict[str, Any], temp_dir: Path) -> Path:
-    video_url = params.get('video_url')
-    video_path = params.get('video_path')
-    
-    if video_url and video_url.strip():
+    video_url = (params.get('video_url') or '').strip() if params.get('video_url') else None
+    video_uuid = (params.get('video_uuid') or '').strip() if params.get('video_uuid') else None
+    video_path = (params.get('video_path') or '').strip() if params.get('video_path') else None
+
+    provided = [p for p in [video_url, video_uuid, video_path] if p]
+    if len(provided) == 0:
+        raise ValueError("Provide one of 'video_url', 'video_uuid', or 'video_path'")
+    if len(provided) > 1:
+        raise ValueError("Provide only one of 'video_url', 'video_uuid', or 'video_path'")
+
+    if video_url:
         return download_input_video(video_url, temp_dir)
-    elif video_path and video_path.strip():
+
+    if video_path:
         video_path_obj = Path(video_path)
         if not video_path_obj.exists():
             raise FileNotFoundError(f"Video file not found: {video_path_obj}")
         return video_path_obj
+
+    if not edream_client:
+        raise RuntimeError("EDream client not initialized; cannot use 'video_uuid'")
+
+    dream = edream_client.get_dream(uuid=video_uuid)
+    if not dream or not dream.get('original_video'):
+        raise ValueError(f"Dream not found or missing original_video for uuid: {video_uuid}")
+
+    original = dream['original_video']
+    if isinstance(original, str) and original.startswith(('http://', 'https://')):
+        return download_input_video(original, temp_dir)
     else:
-        raise ValueError("Either 'video_url' or 'video_path' must be provided")
+        return download_input_video_from_r2_key(str(original), temp_dir)
 
 
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
