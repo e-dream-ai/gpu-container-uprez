@@ -50,11 +50,9 @@ class InterpolatorService:
             except Exception:
                 self._output_size = None
 
-            total_output_frames = self._calculate_output_frame_count(
-                len(input_frames), interpolation_factor
-            )
+            desired_total_frames = len(input_frames) * max(1, interpolation_factor)
             
-            with tqdm(total=total_output_frames, desc="Interpolating frames") as pbar:
+            with tqdm(total=desired_total_frames, desc="Interpolating frames") as pbar:
                 output_frame_idx = 0
                 
                 for i in range(len(input_frames) - 1):
@@ -76,11 +74,23 @@ class InterpolatorService:
                         pbar.update(1)
                 
                 self._copy_frame(input_frames[-1], output_dir, output_frame_idx)
+                output_frame_idx += 1
                 pbar.update(1)
+
+                while output_frame_idx < desired_total_frames:
+                    output_path = output_dir / f"frame_{output_frame_idx:06d}.png"
+                    last_frame = cv2.imread(str(input_frames[-1]))
+                    if last_frame is not None and self._output_size is not None:
+                        out_h, out_w = self._output_size
+                        last_frame = self._resize_to_exact(last_frame, out_h, out_w)
+                    if last_frame is not None:
+                        cv2.imwrite(str(output_path), last_frame)
+                    output_frame_idx += 1
+                    pbar.update(1)
             
             total_time = time.time() - start_time
             logger.info(f"Interpolation completed in {total_time:.2f}s")
-            logger.info(f"Generated {total_output_frames} frames from {len(input_frames)} input frames")
+            logger.info(f"Generated {desired_total_frames} frames from {len(input_frames)} input frames")
             
         except Exception as e:
             logger.error(f"Frame interpolation failed: {e}")

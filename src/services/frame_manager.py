@@ -28,25 +28,18 @@ class FrameManager:
             logger.info(f"Extracting frames from {video_path}")
             
             input_stream = ffmpeg.input(str(video_path))
+            # Extract at native frame rate; avoid resampling/duplication. Ensure no vsync-induced dup/drop.
             if fps is not None:
-                output_stream = (
-                    ffmpeg
-                    .output(
-                        input_stream,
-                        str(frame_pattern),
-                        vf=f'fps=fps={fps}',
-                        pix_fmt='rgb24'
-                    )
+                logger.info(f"Ignoring requested extraction fps={fps}; extracting at native rate")
+            output_stream = (
+                ffmpeg
+                .output(
+                    input_stream,
+                    str(frame_pattern),
+                    pix_fmt='rgb24',
+                    vsync='0'
                 )
-            else:
-                output_stream = (
-                    ffmpeg
-                    .output(
-                        input_stream,
-                        str(frame_pattern),
-                        pix_fmt='rgb24'
-                    )
-                )
+            )
 
             (
                 output_stream

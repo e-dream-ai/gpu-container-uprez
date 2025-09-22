@@ -27,7 +27,7 @@ class VideoProcessorService:
         input_path: Path,
         upscale_factor: int = 2,
         interpolation_factor: int = 2,
-        output_fps: int = 30,
+        output_fps: int = 0,
         output_format: str = 'mp4',
         tile_size: int = 512,
         tile_padding: int = 10,
@@ -39,8 +39,7 @@ class VideoProcessorService:
         
         try:
             logger.info("Step 1: Extracting frames from input video")
-            extraction_fps = max(1.0, float(output_fps) / float(max(1, interpolation_factor)))
-            original_frames_dir = self.frame_manager.extract_frames(input_path, fps=extraction_fps)
+            original_frames_dir = self.frame_manager.extract_frames(input_path)
             original_frame_paths = self.frame_manager.get_frame_paths(original_frames_dir)
             
             logger.info(f"Extracted {len(original_frame_paths)} frames")
@@ -78,10 +77,16 @@ class VideoProcessorService:
             logger.info("Step 4: Encoding final video")
             output_path = self.temp_dir / f"output.{output_format}"
             
+            video_info = self.frame_manager.get_video_info(input_path)
+            source_fps = int(round(video_info.get('fps', 30))) if isinstance(video_info.get('fps', None), (int, float)) else 30
+            computed_fps = max(1, int(round(source_fps * max(1, interpolation_factor))))
+            final_fps = computed_fps if not output_fps or output_fps <= 0 else output_fps
+            logger.info(f"Encoding at {final_fps} fps (source {source_fps} x interp {interpolation_factor})")
+
             self.frame_manager.encode_video(
                 frame_dir=interpolated_frames_dir,
                 output_path=output_path,
-                fps=output_fps,
+                fps=final_fps,
                 format=output_format,
                 quality=quality
             )

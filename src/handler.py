@@ -49,9 +49,9 @@ INPUT_SCHEMA = {
     'output_fps': {
         'type': int,
         'required': False,
-        'default': 30,
-        'constraints': lambda x: 1 <= x <= 120,
-        'description': 'Output video frame rate'
+        'default': 0,
+        'constraints': lambda x: (x == 0) or (1 <= x <= 120),
+        'description': 'Output video frame rate (0 = auto)'
     },
     'output_format': {
         'type': str,
