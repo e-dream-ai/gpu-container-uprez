@@ -120,68 +120,22 @@ INPUT_SCHEMA = {
     }
 }
 
-
-def download_input_video(video_url: str, temp_dir: Path) -> Path:
-    import requests
+def download_input_video_using_sdk(video_url: str, temp_dir: Path) -> Path:
     from urllib.parse import urlparse
-    
-    logger.info(f"Downloading video from: {video_url}")
-    
-    parsed_url = urlparse(video_url)
-    url_path = parsed_url.path
-    
-    file_ext = Path(url_path).suffix or '.mp4'
-    input_path = temp_dir / f"input{file_ext}"
-    
-    try:
-        response = requests.get(video_url, stream=True, timeout=300)
-        response.raise_for_status()
-        
-        with open(input_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        
-        logger.info(f"Video downloaded successfully: {input_path}")
-        return input_path
-        
-    except Exception as e:
-        logger.error(f"Failed to download video: {e}")
-        raise RuntimeError(f"Video download failed: {e}")
 
-
-def download_input_video_from_r2_key(object_key: str, temp_dir: Path) -> Path:
-    bucket_name = os.environ.get("R2_BUCKET_NAME")
-    endpoint_url = os.environ.get("R2_ENDPOINT_URL")
-    r2_key = os.environ.get("R2_ACCESS_KEY_ID")
-    r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
-
-    if not bucket_name or not endpoint_url or not r2_key or not r2_secret:
-        raise RuntimeError("Missing R2 credentials (bucket/endpoint/key/secret) for private download")
-
-    # Normalize key
-    key = object_key.lstrip("/")
-    file_ext = Path(key).suffix or '.mp4'
+    parsed = urlparse(video_url)
+    file_ext = Path(parsed.path).suffix or '.mp4'
     input_path = temp_dir / f"input{file_ext}"
 
-    logger.info(f"Downloading from r2://{bucket_name}/{key}")
+    if not edream_client:
+        raise RuntimeError("EDream client not initialized; cannot download via SDK")
 
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=endpoint_url,
-        aws_access_key_id=r2_key,
-        aws_secret_access_key=r2_secret,
-        region_name="auto",
-        config=BotoConfig(s3={"addressing_style": "path"})
-    )
-
-    try:
-        s3.download_file(bucket_name, key, str(input_path))
-        logger.info(f"R2 download completed: {input_path}")
-        return input_path
-    except Exception as e:
-        logger.error(f"Failed to download from R2: {e}")
-        raise RuntimeError(f"R2 download failed: {e}")
+    logger.info(f"Downloading via SDK from: {video_url}")
+    success = edream_client.file_client.download_file(video_url, str(input_path))
+    if not success:
+        raise RuntimeError("SDK download failed")
+    logger.info(f"SDK download completed: {input_path}")
+    return input_path
 
 
 def upload_output_video(video_path: Path) -> str:
@@ -233,7 +187,7 @@ def get_input_video_path(params: Dict[str, Any], temp_dir: Path) -> Path:
         raise ValueError("Provide only one of 'video_url', 'video_uuid', or 'video_path'")
 
     if video_url:
-        return download_input_video(video_url, temp_dir)
+        return download_input_video_using_sdk(video_url, temp_dir)
 
     if video_path:
         video_path_obj = Path(video_path)
@@ -249,10 +203,9 @@ def get_input_video_path(params: Dict[str, Any], temp_dir: Path) -> Path:
         raise ValueError(f"Dream not found or missing original_video for uuid: {video_uuid}")
 
     original = dream['original_video']
-    if isinstance(original, str) and original.startswith(('http://', 'https://')):
-        return download_input_video(original, temp_dir)
-    else:
-        return download_input_video_from_r2_key(str(original), temp_dir)
+    if not isinstance(original, str):
+        raise ValueError("original_video is not a valid URL string")
+    return download_input_video_using_sdk(original, temp_dir)
 
 
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
