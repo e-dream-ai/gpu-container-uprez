@@ -49,8 +49,8 @@ class InputValidator:
                 result['errors'].append("Upscale factor must be an integer")
                 return result
         
-        if factor != 2:
-            result['errors'].append("Upscale factor must be 2")
+        if factor not in [1, 2]:
+            result['errors'].append("Upscale factor must be 1 or 2")
             return result
                 
         result['valid'] = True
@@ -68,8 +68,8 @@ class InputValidator:
                 result['errors'].append("Interpolation factor must be an integer")
                 return result
         
-        if factor not in [2, 4, 8]:
-            result['errors'].append("Interpolation factor must be 2, 4, or 8")
+        if factor not in [1, 2, 4, 8]:
+            result['errors'].append("Interpolation factor must be 1, 2, 4, or 8")
             return result
         
         if factor >= 4:

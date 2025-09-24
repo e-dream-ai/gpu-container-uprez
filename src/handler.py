@@ -49,15 +49,15 @@ INPUT_SCHEMA = {
         'type': int,
         'required': False,
         'default': 2,
-        'constraints': lambda x: x == 2,
-        'description': 'Upscaling factor (2x only)'
+        'constraints': lambda x: x in [1, 2],
+        'description': 'Upscaling factor (1x = skip, 2x)'
     },
     'interpolation_factor': {
         'type': int,
         'required': False,
         'default': 2,
-        'constraints': lambda x: x in [2, 4, 8],
-        'description': 'Frame interpolation factor (2x, 4x, or 8x)'
+        'constraints': lambda x: x in [1, 2, 4, 8],
+        'description': 'Frame interpolation factor (1x = skip, 2x, 4x, or 8x)'
     },
     'output_fps': {
         'type': int,

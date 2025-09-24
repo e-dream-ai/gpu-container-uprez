@@ -28,6 +28,20 @@ class InterpolatorService:
             logger.warning("Need at least 2 frames for interpolation")
             return
         
+        if interpolation_factor == 1:
+            logger.info("Interpolation factor is 1x; skipping interpolation and copying frames")
+            for idx, frame_path in enumerate(input_frames):
+                try:
+                    img = cv2.imread(str(frame_path))
+                    if img is None:
+                        logger.warning(f"Could not read frame: {frame_path}")
+                        continue
+                    output_path = output_dir / f"frame_{idx:06d}.png"
+                    cv2.imwrite(str(output_path), img)
+                except Exception as e:
+                    logger.error(f"Failed to copy frame {frame_path}: {e}")
+            return
+        
         logger.info(f"Interpolating {len(input_frames)} frames with factor {interpolation_factor}x")
         
         rife_model = self.model_loader.load_rife_model()

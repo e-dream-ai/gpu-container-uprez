@@ -28,6 +28,20 @@ class UpscalerService:
             logger.warning("No input frames provided for upscaling")
             return
         
+        if upscale_factor == 1:
+            logger.info("Upscale factor is 1x; skipping upscaling step and copying frames")
+            for frame_path in input_frames:
+                try:
+                    img = cv2.imread(str(frame_path), cv2.IMREAD_COLOR)
+                    if img is None:
+                        logger.warning(f"Could not read frame: {frame_path}")
+                        continue
+                    output_path = output_dir / frame_path.name
+                    cv2.imwrite(str(output_path), img)
+                except Exception as e:
+                    logger.error(f"Failed to copy frame {frame_path}: {e}")
+            return
+        
         if upscale_factor != 2:
             logger.warning(f"Unsupported upscale_factor={upscale_factor}. Falling back to 2x.")
             upscale_factor = 2
