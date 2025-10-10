@@ -44,7 +44,9 @@ class InterpolatorService:
         
         logger.info(f"Interpolating {len(input_frames)} frames with factor {interpolation_factor}x")
         
+        logger.info("Loading RIFE model...")
         rife_model = self.model_loader.load_rife_model()
+        logger.info("RIFE model loaded successfully")
         
         try:
             import time
@@ -73,17 +75,26 @@ class InterpolatorService:
                     current_frame = input_frames[i]
                     next_frame = input_frames[i + 1]
                     
+                    logger.debug(f"Processing frame pair {i}/{len(input_frames)-1}")
+                    
                     self._copy_frame(current_frame, output_dir, output_frame_idx)
                     output_frame_idx += 1
                     pbar.update(1)
                     
-                    intermediate_frames = self._generate_intermediate_frames(
-                        current_frame, next_frame, rife_model, interpolation_factor
-                    )
+                    try:
+                        intermediate_frames = self._generate_intermediate_frames(
+                            current_frame, next_frame, rife_model, interpolation_factor
+                        )
+                        logger.debug(f"Generated {len(intermediate_frames)} intermediate frames for pair {i}")
+                    except Exception as e:
+                        logger.error(f"Failed to generate intermediate frames for pair {i} ({current_frame} -> {next_frame}): {e}")
+                        raise RuntimeError(f"Interpolation failed at frame pair {i}: {e}")
                     
                     for intermediate_frame in intermediate_frames:
                         output_path = output_dir / f"frame_{output_frame_idx:06d}.png"
-                        cv2.imwrite(str(output_path), intermediate_frame)
+                        success = cv2.imwrite(str(output_path), intermediate_frame)
+                        if not success:
+                            raise RuntimeError(f"Failed to write interpolated frame to {output_path}")
                         output_frame_idx += 1
                         pbar.update(1)
                 
@@ -106,6 +117,13 @@ class InterpolatorService:
             logger.info(f"Interpolation completed in {total_time:.2f}s")
             logger.info(f"Generated {desired_total_frames} frames from {len(input_frames)} input frames")
             
+            # Validate that frames were actually written
+            actual_frames = list(output_dir.glob("frame_*.png"))
+            if len(actual_frames) == 0:
+                raise RuntimeError(f"No interpolated frames were generated! Expected {desired_total_frames} frames")
+            if len(actual_frames) < desired_total_frames:
+                logger.warning(f"Generated fewer frames than expected: {len(actual_frames)} vs {desired_total_frames}")
+            
         except Exception as e:
             logger.error(f"Frame interpolation failed: {e}")
             raise RuntimeError(f"Interpolation process failed: {e}")
@@ -118,59 +136,55 @@ class InterpolatorService:
         interpolation_factor: int
     ) -> List[np.ndarray]:
 
-        try:
-            frame1 = cv2.imread(str(frame1_path))
-            frame2 = cv2.imread(str(frame2_path))
-            
-            if frame1 is None or frame2 is None:
-                logger.error(f"Could not load frames: {frame1_path}, {frame2_path}")
-                return []
+        frame1 = cv2.imread(str(frame1_path))
+        frame2 = cv2.imread(str(frame2_path))
+        
+        if frame1 is None or frame2 is None:
+            error_msg = f"Could not load frames: {frame1_path}, {frame2_path}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
-            if self._target_size is None:
-                raise RuntimeError("Target size not initialized before generating intermediate frames")
-            target_h, target_w = self._target_size
-            frame1 = self._fit_to_size(frame1, target_h, target_w)
-            frame2 = self._fit_to_size(frame2, target_h, target_w)
+        if self._target_size is None:
+            raise RuntimeError("Target size not initialized before generating intermediate frames")
+        target_h, target_w = self._target_size
+        frame1 = self._fit_to_size(frame1, target_h, target_w)
+        frame2 = self._fit_to_size(frame2, target_h, target_w)
 
-            frame1_tensor = self._frame_to_tensor(frame1)
-            frame2_tensor = self._frame_to_tensor(frame2)
+        frame1_tensor = self._frame_to_tensor(frame1)
+        frame2_tensor = self._frame_to_tensor(frame2)
+        
+        intermediate_frames = []
+        
+        if interpolation_factor == 2:
+            mid_frame = self._interpolate_single_frame(
+                frame1_tensor, frame2_tensor, rife_model, 0.5
+            )
+            if self._output_size is not None:
+                out_h, out_w = self._output_size
+                mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
+            intermediate_frames.append(mid_frame)
             
-            intermediate_frames = []
-            
-            if interpolation_factor == 2:
+        elif interpolation_factor == 4:
+            for t in [0.25, 0.5, 0.75]:
                 mid_frame = self._interpolate_single_frame(
-                    frame1_tensor, frame2_tensor, rife_model, 0.5
+                    frame1_tensor, frame2_tensor, rife_model, t
                 )
                 if self._output_size is not None:
                     out_h, out_w = self._output_size
                     mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
                 intermediate_frames.append(mid_frame)
                 
-            elif interpolation_factor == 4:
-                for t in [0.25, 0.5, 0.75]:
-                    mid_frame = self._interpolate_single_frame(
-                        frame1_tensor, frame2_tensor, rife_model, t
-                    )
-                    if self._output_size is not None:
-                        out_h, out_w = self._output_size
-                        mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
-                    intermediate_frames.append(mid_frame)
-                    
-            elif interpolation_factor == 8:
-                for t in [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]:
-                    mid_frame = self._interpolate_single_frame(
-                        frame1_tensor, frame2_tensor, rife_model, t
-                    )
-                    if self._output_size is not None:
-                        out_h, out_w = self._output_size
-                        mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
-                    intermediate_frames.append(mid_frame)
-            
-            return intermediate_frames
-            
-        except Exception as e:
-            logger.error(f"Failed to generate intermediate frames: {e}")
-            return []
+        elif interpolation_factor == 8:
+            for t in [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]:
+                mid_frame = self._interpolate_single_frame(
+                    frame1_tensor, frame2_tensor, rife_model, t
+                )
+                if self._output_size is not None:
+                    out_h, out_w = self._output_size
+                    mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
+                intermediate_frames.append(mid_frame)
+        
+        return intermediate_frames
     
     def _interpolate_single_frame(
         self,
