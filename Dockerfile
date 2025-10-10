@@ -18,24 +18,6 @@ RUN apt-get update && apt-get install -y \
     && ln -sf /usr/bin/pip3 /usr/bin/pip \
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
-# Install PyTorch with CUDA 11.8
-RUN pip install --no-cache-dir torch torchvision torchaudio \
-    --extra-index-url https://download.pytorch.org/whl/cu118
-
-# Install Python dependencies
-RUN pip install --no-cache-dir \
-    runpod \
-    requests \
-    ffmpeg-python \
-    opencv-python-headless \
-    numpy \
-    Pillow \
-    tqdm \
-    basicsr \
-    gfpgan \
-    realesrgan \
-    gdown
-
 # Create directories
 RUN mkdir -p /opt/models/realesrgan /opt/models/rife /opt/app $TEMP_DIR
 
