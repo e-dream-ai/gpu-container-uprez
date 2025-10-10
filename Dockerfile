@@ -8,8 +8,6 @@ ENV CMAKE_BUILD_PARALLEL_LEVEL=8
 ENV PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync
 ENV MODEL_CACHE_DIR=/opt/models
 ENV TEMP_DIR=/tmp/video_processing
-ENV PIP_DEFAULT_TIMEOUT=100
-ENV PIP_RETRIES=5
 
 # System dependencies
 RUN apt-get update && apt-get install -y \
@@ -33,10 +31,8 @@ COPY src/ ./src/
 COPY src/vendor/rife/model /opt/app/src/vendor/rife/model
 COPY requirements.txt ./
 
-# Install remaining requirements with retry logic
-RUN pip install --no-cache-dir -r requirements.txt || \
-    (sleep 5 && pip install --no-cache-dir -r requirements.txt) || \
-    (sleep 10 && pip install --no-cache-dir -r requirements.txt)
+# Install remaining requirements
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Set entrypoint
 CMD ["python", "-u", "src/handler.py"]
