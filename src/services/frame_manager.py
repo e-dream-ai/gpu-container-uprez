@@ -38,7 +38,6 @@ class FrameManager:
                     str(frame_pattern),
                     pix_fmt='rgb24',
                     vsync='0',
-                    fps_mode='passthrough',
                     start_number=0
                 )
             )
