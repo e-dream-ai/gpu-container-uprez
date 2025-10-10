@@ -16,6 +16,12 @@ RUN apt-get update && apt-get install -y \
     && ln -sf /usr/bin/pip3 /usr/bin/pip \
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
+# Install PyTorch first (required as build dependency for basicsr and others)
+RUN pip install --default-timeout=100 --no-cache-dir \
+    torch==2.0.1 \
+    torchvision==0.15.2 \
+    --extra-index-url https://download.pytorch.org/whl/cu118
+
 # Create directories
 RUN mkdir -p /opt/models/realesrgan /opt/models/rife /opt/app $TEMP_DIR
 
@@ -32,7 +38,7 @@ COPY src/vendor/rife/model /opt/app/src/vendor/rife/model
 COPY requirements.txt ./
 
 # Install remaining requirements
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
 # Set entrypoint
 CMD ["python", "-u", "src/handler.py"]
