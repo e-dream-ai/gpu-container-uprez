@@ -38,6 +38,7 @@ class FrameManager:
                     str(frame_pattern),
                     pix_fmt='rgb24',
                     vsync='0',
+                    fps_mode='passthrough',
                     start_number=0
                 )
             )
@@ -82,19 +83,29 @@ class FrameManager:
         try:
             logger.info(f"Encoding video from {frame_dir} to {output_path}")
             
-            frame_pattern = frame_dir / "frame_%06d.png"
-            if not any(frame_dir.glob("frame_*.png")):
+            frame_files = sorted(frame_dir.glob("frame_*.png"))
+            
+            if not frame_files:
+                # Try to find any PNG files
                 frame_files = sorted(frame_dir.glob("*.png"))
-                if frame_files:
-                    temp_frame_dir = self.temp_dir / "temp_frames_for_encoding"
-                    temp_frame_dir.mkdir(exist_ok=True)
-                    self.cleanup_manager.add_directory(temp_frame_dir)
-                    
-                    for i, frame_file in enumerate(frame_files):
-                        symlink_path = temp_frame_dir / f"frame_{i+1:06d}.png"
-                        symlink_path.symlink_to(frame_file.absolute())
-                    
-                    frame_pattern = temp_frame_dir / "frame_%06d.png"
+                
+                if not frame_files:
+                    raise RuntimeError(f"No frames found in {frame_dir} for encoding")
+                
+                logger.info(f"Found {len(frame_files)} frames without standard naming, creating temporary symlinks")
+                temp_frame_dir = self.temp_dir / "temp_frames_for_encoding"
+                temp_frame_dir.mkdir(exist_ok=True)
+                self.cleanup_manager.add_directory(temp_frame_dir)
+                
+                for i, frame_file in enumerate(frame_files):
+                    # Start from 0 to match start_number=0
+                    symlink_path = temp_frame_dir / f"frame_{i:06d}.png"
+                    symlink_path.symlink_to(frame_file.absolute())
+                
+                frame_pattern = temp_frame_dir / "frame_%06d.png"
+            else:
+                logger.info(f"Found {len(frame_files)} frames in standard format")
+                frame_pattern = frame_dir / "frame_%06d.png"
             
             codec_params = self._get_codec_params(format, quality)
             
