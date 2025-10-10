@@ -37,7 +37,8 @@ class FrameManager:
                     input_stream,
                     str(frame_pattern),
                     pix_fmt='rgb24',
-                    vsync='0'
+                    vsync='0',
+                    start_number=0
                 )
             )
 
@@ -53,8 +54,10 @@ class FrameManager:
             
         except ffmpeg.Error as e:
             error_msg = e.stderr.decode() if e.stderr else str(e)
-            logger.error(f"Frame extraction failed: {error_msg}")
-            raise RuntimeError(f"Failed to extract frames: {error_msg}")
+            error_lines = error_msg.strip().split('\n')
+            relevant_error = '\n'.join(error_lines[-5:]) if len(error_lines) > 5 else error_msg
+            logger.error(f"Frame extraction failed: {relevant_error}")
+            raise RuntimeError(f"Failed to extract frames: {relevant_error}")
     
     def get_frame_paths(self, frame_dir: Path) -> List[Path]:
         frame_paths = sorted(frame_dir.glob("frame_*.png"))
@@ -95,7 +98,7 @@ class FrameManager:
             
             codec_params = self._get_codec_params(format, quality)
             
-            input_stream = ffmpeg.input(str(frame_pattern), framerate=fps)
+            input_stream = ffmpeg.input(str(frame_pattern), framerate=fps, start_number=0)
             output_stream = ffmpeg.output(
                 input_stream,
                 str(output_path),
@@ -112,8 +115,10 @@ class FrameManager:
             
         except ffmpeg.Error as e:
             error_msg = e.stderr.decode() if e.stderr else str(e)
-            logger.error(f"Video encoding failed: {error_msg}")
-            raise RuntimeError(f"Failed to encode video: {error_msg}")
+            error_lines = error_msg.strip().split('\n')
+            relevant_error = '\n'.join(error_lines[-5:]) if len(error_lines) > 5 else error_msg
+            logger.error(f"Video encoding failed: {relevant_error}")
+            raise RuntimeError(f"Failed to encode video: {relevant_error}")
     
     def _get_codec_params(self, format: str, quality: str) -> dict:
         quality_settings = {
