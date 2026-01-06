@@ -102,12 +102,17 @@ class VideoProcessorService:
             final_fps = computed_fps if not output_fps or output_fps <= 0 else output_fps
             logger.info(f"Encoding at {final_fps} fps (source {source_fps} x interp {interpolation_factor})")
 
+            # Encoding: Map 0-100% to 90-100%
+            def encoding_progress(p):
+                update_progress(90 + int(p * 0.10))
+
             self.frame_manager.encode_video(
                 frame_dir=interpolated_frames_dir,
                 output_path=output_path,
                 fps=final_fps,
                 format=output_format,
-                quality=quality
+                quality=quality,
+                progress_callback=encoding_progress
             )
             update_progress(100)
             

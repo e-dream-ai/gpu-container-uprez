@@ -1,6 +1,8 @@
 import logging
+import subprocess
+import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Callable
 import ffmpeg
 
 from utils.cleanup_manager import CleanupManager
@@ -76,18 +78,16 @@ class FrameManager:
         output_path: Path,
         fps: int = 30,
         format: str = 'mp4',
-        quality: str = 'high'
+        quality: str = 'high',
+        progress_callback: Optional[Callable[[int], None]] = None
     ) -> Path:
 
         try:
             logger.info(f"Encoding video from {frame_dir} to {output_path}")
             
             frame_files = sorted(frame_dir.glob("frame_*.png"))
-            
             if not frame_files:
-                # Try to find any PNG files
                 frame_files = sorted(frame_dir.glob("*.png"))
-                
                 if not frame_files:
                     raise RuntimeError(f"No frames found in {frame_dir} for encoding")
                 
@@ -97,7 +97,6 @@ class FrameManager:
                 self.cleanup_manager.add_directory(temp_frame_dir)
                 
                 for i, frame_file in enumerate(frame_files):
-                    # Start from 0 to match start_number=0
                     symlink_path = temp_frame_dir / f"frame_{i:06d}.png"
                     symlink_path.symlink_to(frame_file.absolute())
                 
@@ -106,6 +105,7 @@ class FrameManager:
                 logger.info(f"Found {len(frame_files)} frames in standard format")
                 frame_pattern = frame_dir / "frame_%06d.png"
             
+            total_frames = len(frame_files)
             codec_params = self._get_codec_params(format, quality)
             
             input_stream = ffmpeg.input(str(frame_pattern), framerate=fps, start_number=0)
@@ -115,7 +115,34 @@ class FrameManager:
                 **codec_params
             )
             
-            ffmpeg.run(output_stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+            args = output_stream.overwrite_output().get_args()
+            cmd = ['ffmpeg'] + args
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                encoding='utf-8'
+            )
+
+            frame_regex = re.compile(r'frame=\s*(\d+)')
+
+            while True:
+                line = process.stderr.readline()
+                if not line and process.poll() is not None:
+                    break
+                
+                if line:
+                    match = frame_regex.search(line)
+                    if match and progress_callback:
+                        current_frame = int(match.group(1))
+                        percent = min(100, int((current_frame / total_frames) * 100))
+                        progress_callback(percent)
+
+            if process.returncode != 0:
+                stderr = process.stderr.read()
+                raise RuntimeError(f"FFmpeg failed with return code {process.returncode}. Stderr: {stderr}")
             
             if not output_path.exists():
                 raise RuntimeError("Output video file was not created")
