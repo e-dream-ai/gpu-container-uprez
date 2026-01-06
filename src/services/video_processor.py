@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Callable
 from services.model_loader import ModelLoader
 from services.frame_manager import FrameManager
 from services.upscaler_service import UpscalerService
@@ -31,31 +32,44 @@ class VideoProcessorService:
         output_format: str = 'mp4',
         tile_size: int = 512,
         tile_padding: int = 10,
-        quality: str = 'high'
+        quality: str = 'high',
+        progress_callback: Callable[[int], None] = None
     ) -> Path:
+        def update_progress(percent):
+            if progress_callback:
+                progress_callback(percent)
+
         logger.info(f"Starting video processing pipeline")
         logger.info(f"Input: {input_path}")
         logger.info(f"Upscale: {upscale_factor}x, Interpolation: {interpolation_factor}x")
         
         try:
+            update_progress(5)
             logger.info("Step 1: Extracting frames from input video")
             original_frames_dir = self.frame_manager.extract_frames(input_path)
             original_frame_paths = self.frame_manager.get_frame_paths(original_frames_dir)
             
+            update_progress(15)
             logger.info(f"Extracted {len(original_frame_paths)} frames")
             
             logger.info("Step 2: Upscaling frames with Real-ESRGAN")
             upscaled_frames_dir = self.temp_dir / "frames_upscaled"
             upscaled_frames_dir.mkdir(exist_ok=True)
             self.cleanup_manager.add_directory(upscaled_frames_dir)
-            
+
+            # Upscaling: Map 0-100% to 15-50%
+            def upscale_progress(p):
+                update_progress(15 + int(p * 0.35))
+
             self.upscaler.upscale_frames(
                 input_frames=original_frame_paths,
                 output_dir=upscaled_frames_dir,
                 upscale_factor=upscale_factor,
                 tile_size=tile_size,
-                tile_padding=tile_padding
+                tile_padding=tile_padding,
+                progress_callback=upscale_progress
             )
+            update_progress(50)
             
             upscaled_frame_paths = self.frame_manager.get_frame_paths(upscaled_frames_dir)
             logger.info(f"Upscaled {len(upscaled_frame_paths)} frames")
@@ -65,11 +79,16 @@ class VideoProcessorService:
             interpolated_frames_dir.mkdir(exist_ok=True)
             self.cleanup_manager.add_directory(interpolated_frames_dir)
             
+            def interpolation_progress(p):
+                update_progress(50 + int(p * 0.40))
+
             self.interpolator.interpolate_frames(
                 input_frames=upscaled_frame_paths,
                 output_dir=interpolated_frames_dir,
-                interpolation_factor=interpolation_factor
+                interpolation_factor=interpolation_factor,
+                progress_callback=interpolation_progress
             )
+            update_progress(90)
             
             interpolated_frame_paths = self.frame_manager.get_frame_paths(interpolated_frames_dir)
             logger.info(f"Generated {len(interpolated_frame_paths)} interpolated frames")
@@ -90,6 +109,7 @@ class VideoProcessorService:
                 format=output_format,
                 quality=quality
             )
+            update_progress(100)
             
             logger.info(f"Video processing completed: {output_path}")
             return output_path

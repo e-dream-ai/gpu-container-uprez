@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Callable
 import cv2
 from tqdm import tqdm
 
@@ -22,7 +22,8 @@ class UpscalerService:
         upscale_factor: int = 2,
         tile_size: int = 512,
         tile_padding: int = 10,
-        batch_size: int = 1
+        batch_size: int = 1,
+        progress_callback: Callable[[int], None] = None
     ) -> None:
         if not input_frames:
             logger.warning("No input frames provided for upscaling")
@@ -30,7 +31,7 @@ class UpscalerService:
         
         if upscale_factor == 1:
             logger.info("Upscale factor is 1x; skipping upscaling step and copying frames")
-            for frame_path in input_frames:
+            for idx, frame_path in enumerate(input_frames):
                 try:
                     img = cv2.imread(str(frame_path), cv2.IMREAD_COLOR)
                     if img is None:
@@ -38,6 +39,9 @@ class UpscalerService:
                         continue
                     output_path = output_dir / frame_path.name
                     cv2.imwrite(str(output_path), img)
+                    
+                    if progress_callback:
+                        progress_callback(int((idx + 1) / len(input_frames) * 100))
                 except Exception as e:
                     logger.error(f"Failed to copy frame {frame_path}: {e}")
             return
@@ -63,6 +67,9 @@ class UpscalerService:
                     batch = input_frames[i:i + batch_size]
                     self._process_frame_batch(batch, output_dir, upsampler, upscale_factor)
                     pbar.update(len(batch))
+                    
+                    if progress_callback:
+                        progress_callback(int((i + len(batch)) / len(input_frames) * 100))
             
             total_time = time.time() - start_time
             logger.info(f"Upscaling completed in {total_time:.2f}s")

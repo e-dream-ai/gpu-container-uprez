@@ -231,6 +231,9 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             cleanup_manager=cleanup_manager
         )
         
+        def progress_callback(percent):
+            runpod.serverless.progress_update(job, percent)
+
         output_video_path = processor.process_video(
             input_path=input_video_path,
             upscale_factor=params['upscale_factor'],
@@ -239,7 +242,8 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             output_format=params['output_format'],
             tile_size=params['tile_size'],
             tile_padding=params['tile_padding'],
-            quality=params['quality']
+            quality=params['quality'],
+            progress_callback=progress_callback
         )
         
         download_url = upload_output_video(output_video_path)

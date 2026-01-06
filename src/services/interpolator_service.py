@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Callable
 import cv2
 import numpy as np
 import torch
@@ -22,7 +22,8 @@ class InterpolatorService:
         self,
         input_frames: List[Path],
         output_dir: Path,
-        interpolation_factor: int = 2
+        interpolation_factor: int = 2,
+        progress_callback: Callable[[int], None] = None
     ) -> None:
         if len(input_frames) < 2:
             logger.warning("Need at least 2 frames for interpolation")
@@ -38,6 +39,9 @@ class InterpolatorService:
                         continue
                     output_path = output_dir / f"frame_{idx:06d}.png"
                     cv2.imwrite(str(output_path), img)
+                    
+                    if progress_callback:
+                        progress_callback(int((idx + 1) / len(input_frames) * 100))
                 except Exception as e:
                     logger.error(f"Failed to copy frame {frame_path}: {e}")
             return
@@ -97,6 +101,9 @@ class InterpolatorService:
                             raise RuntimeError(f"Failed to write interpolated frame to {output_path}")
                         output_frame_idx += 1
                         pbar.update(1)
+                    
+                    if progress_callback:
+                        progress_callback(int(output_frame_idx / desired_total_frames * 100))
                 
                 self._copy_frame(input_frames[-1], output_dir, output_frame_idx)
                 output_frame_idx += 1
@@ -112,6 +119,9 @@ class InterpolatorService:
                         cv2.imwrite(str(output_path), last_frame)
                     output_frame_idx += 1
                     pbar.update(1)
+                
+                if progress_callback:
+                    progress_callback(100)
             
             total_time = time.time() - start_time
             logger.info(f"Interpolation completed in {total_time:.2f}s")
