@@ -231,8 +231,11 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             cleanup_manager=cleanup_manager
         )
         
-        def progress_callback(percent):
-            runpod.serverless.progress_update(job, percent)
+        def progress_callback(percent, preview=None):
+            if preview:
+                runpod.serverless.progress_update(job, {"progress": percent, "preview_frame": preview})
+            else:
+                runpod.serverless.progress_update(job, percent)
 
         output_video_path = processor.process_video(
             input_path=input_video_path,

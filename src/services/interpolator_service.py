@@ -23,7 +23,7 @@ class InterpolatorService:
         input_frames: List[Path],
         output_dir: Path,
         interpolation_factor: int = 2,
-        progress_callback: Callable[[int], None] = None
+        progress_callback: Callable[[int, str], None] = None
     ) -> None:
         if len(input_frames) < 2:
             logger.warning("Need at least 2 frames for interpolation")
@@ -41,7 +41,12 @@ class InterpolatorService:
                     cv2.imwrite(str(output_path), img)
                     
                     if progress_callback:
-                        progress_callback(int((idx + 1) / len(input_frames) * 100))
+                        # Convert to low-res base64 for preview
+                        preview_img = cv2.resize(img, (256, 144))
+                        _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                        import base64
+                        preview_base64 = base64.b64encode(buffer).decode('utf-8')
+                        progress_callback(int((idx + 1) / len(input_frames) * 100), preview_base64)
                 except Exception as e:
                     logger.error(f"Failed to copy frame {frame_path}: {e}")
             return
@@ -94,16 +99,25 @@ class InterpolatorService:
                         logger.error(f"Failed to generate intermediate frames for pair {i} ({current_frame} -> {next_frame}): {e}")
                         raise RuntimeError(f"Interpolation failed at frame pair {i}: {e}")
                     
+                    last_intermediate = None
                     for intermediate_frame in intermediate_frames:
                         output_path = output_dir / f"frame_{output_frame_idx:06d}.png"
                         success = cv2.imwrite(str(output_path), intermediate_frame)
                         if not success:
                             raise RuntimeError(f"Failed to write interpolated frame to {output_path}")
+                        last_intermediate = intermediate_frame
                         output_frame_idx += 1
                         pbar.update(1)
                     
                     if progress_callback:
-                        progress_callback(int(output_frame_idx / desired_total_frames * 100))
+                        preview_base64 = None
+                        if last_intermediate is not None:
+                            preview_img = cv2.resize(last_intermediate, (256, 144))
+                            _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                            import base64
+                            preview_base64 = base64.b64encode(buffer).decode('utf-8')
+                        
+                        progress_callback(int(output_frame_idx / desired_total_frames * 100), preview_base64)
                 
                 self._copy_frame(input_frames[-1], output_dir, output_frame_idx)
                 output_frame_idx += 1
@@ -121,7 +135,7 @@ class InterpolatorService:
                     pbar.update(1)
                 
                 if progress_callback:
-                    progress_callback(100)
+                    progress_callback(100, None)
             
             total_time = time.time() - start_time
             logger.info(f"Interpolation completed in {total_time:.2f}s")

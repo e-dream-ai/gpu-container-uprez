@@ -33,11 +33,11 @@ class VideoProcessorService:
         tile_size: int = 512,
         tile_padding: int = 10,
         quality: str = 'high',
-        progress_callback: Callable[[int], None] = None
+        progress_callback: Callable[[int, Optional[str]], None] = None
     ) -> Path:
-        def update_progress(percent):
+        def update_progress(percent, preview=None):
             if progress_callback:
-                progress_callback(percent)
+                progress_callback(percent, preview)
 
         logger.info(f"Starting video processing pipeline")
         logger.info(f"Input: {input_path}")
@@ -56,10 +56,10 @@ class VideoProcessorService:
             upscaled_frames_dir = self.temp_dir / "frames_upscaled"
             upscaled_frames_dir.mkdir(exist_ok=True)
             self.cleanup_manager.add_directory(upscaled_frames_dir)
-
+            
             # Upscaling: Map 0-100% to 15-50%
-            def upscale_progress(p):
-                update_progress(15 + int(p * 0.35))
+            def upscale_progress(p, preview=None):
+                update_progress(15 + int(p * 0.35), preview)
 
             self.upscaler.upscale_frames(
                 input_frames=original_frame_paths,
@@ -79,9 +79,9 @@ class VideoProcessorService:
             interpolated_frames_dir.mkdir(exist_ok=True)
             self.cleanup_manager.add_directory(interpolated_frames_dir)
             
-            def interpolation_progress(p):
-                update_progress(50 + int(p * 0.40))
-
+            def interpolation_progress(p, preview=None):
+                update_progress(50 + int(p * 0.40), preview)
+            
             self.interpolator.interpolate_frames(
                 input_frames=upscaled_frame_paths,
                 output_dir=interpolated_frames_dir,

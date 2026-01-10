@@ -23,7 +23,7 @@ class UpscalerService:
         tile_size: int = 512,
         tile_padding: int = 10,
         batch_size: int = 1,
-        progress_callback: Callable[[int], None] = None
+        progress_callback: Callable[[int, str], None] = None
     ) -> None:
         if not input_frames:
             logger.warning("No input frames provided for upscaling")
@@ -41,7 +41,11 @@ class UpscalerService:
                     cv2.imwrite(str(output_path), img)
                     
                     if progress_callback:
-                        progress_callback(int((idx + 1) / len(input_frames) * 100))
+                        preview_img = cv2.resize(img, (256, 144))
+                        _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                        import base64
+                        preview_base64 = base64.b64encode(buffer).decode('utf-8')
+                        progress_callback(int((idx + 1) / len(input_frames) * 100), preview_base64)
                 except Exception as e:
                     logger.error(f"Failed to copy frame {frame_path}: {e}")
             return
@@ -65,11 +69,19 @@ class UpscalerService:
             with tqdm(total=len(input_frames), desc="Upscaling frames") as pbar:
                 for i in range(0, len(input_frames), batch_size):
                     batch = input_frames[i:i + batch_size]
-                    self._process_frame_batch(batch, output_dir, upsampler, upscale_factor)
+                    last_upscaled_img = self._process_frame_batch(batch, output_dir, upsampler, upscale_factor)
                     pbar.update(len(batch))
                     
                     if progress_callback:
-                        progress_callback(int((i + len(batch)) / len(input_frames) * 100))
+                        preview_base64 = None
+                        if last_upscaled_img is not None:
+                            # Resize for preview to keep it small
+                            preview_img = cv2.resize(last_upscaled_img, (256, 144))
+                            _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                            import base64
+                            preview_base64 = base64.b64encode(buffer).decode('utf-8')
+                        
+                        progress_callback(int((i + len(batch)) / len(input_frames) * 100), preview_base64)
             
             total_time = time.time() - start_time
             logger.info(f"Upscaling completed in {total_time:.2f}s")
@@ -83,9 +95,10 @@ class UpscalerService:
         self,
         frame_batch: List[Path],
         output_dir: Path,
-            upsampler,
-            upscale_factor: int
-    ) -> None:
+        upsampler,
+        upscale_factor: int
+    ) -> any:
+        last_img = None
         for frame_path in frame_batch:
             try:
                 img = cv2.imread(str(frame_path), cv2.IMREAD_COLOR)
@@ -94,6 +107,7 @@ class UpscalerService:
                     continue
                 
                 img_upscaled, _ = upsampler.enhance(img, outscale=upscale_factor)
+                last_img = img_upscaled
                 
                 output_path = output_dir / frame_path.name
                 cv2.imwrite(str(output_path), img_upscaled)
@@ -101,6 +115,7 @@ class UpscalerService:
             except Exception as e:
                 logger.error(f"Failed to process frame {frame_path}: {e}")
                 continue
+        return last_img
     
     def upscale_single_frame(
         self,
