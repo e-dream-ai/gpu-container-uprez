@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import List, Callable
+from typing import List, Callable, Optional
 import cv2
 from tqdm import tqdm
 
@@ -23,7 +23,7 @@ class UpscalerService:
         tile_size: int = 512,
         tile_padding: int = 10,
         batch_size: int = 1,
-        progress_callback: Callable[[int, str], None] = None
+        progress_callback: Callable[[int, Optional[str]], None] = None
     ) -> None:
         if not input_frames:
             logger.warning("No input frames provided for upscaling")

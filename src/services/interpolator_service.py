@@ -23,7 +23,7 @@ class InterpolatorService:
         input_frames: List[Path],
         output_dir: Path,
         interpolation_factor: int = 2,
-        progress_callback: Callable[[int, str], None] = None
+        progress_callback: Callable[[int, Optional[str]], None] = None
     ) -> None:
         if len(input_frames) < 2:
             logger.warning("Need at least 2 frames for interpolation")

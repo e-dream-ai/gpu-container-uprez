@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 from services.model_loader import ModelLoader
 from services.frame_manager import FrameManager
 from services.upscaler_service import UpscalerService
