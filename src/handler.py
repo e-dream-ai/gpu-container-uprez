@@ -1,4 +1,5 @@
 import os
+import time
 import tempfile
 import logging
 from typing import Dict, Any
@@ -231,11 +232,22 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             cleanup_manager=cleanup_manager
         )
         
+        start_time = time.perf_counter()
+        
         def progress_callback(percent, preview=None):
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            countdown_ms = int((elapsed_ms / percent) * (100 - percent)) if percent > 0 else 0
+            
+            progress_data = {
+                "progress": round(float(percent), 1),
+                "render_time_ms": elapsed_ms,
+                "countdown_ms": countdown_ms
+            }
+            
             if preview:
-                runpod.serverless.progress_update(job, {"progress": percent, "preview_frame": preview})
-            else:
-                runpod.serverless.progress_update(job, percent)
+                progress_data["preview_frame"] = preview
+                
+            runpod.serverless.progress_update(job, progress_data)
 
         output_video_path = processor.process_video(
             input_path=input_video_path,

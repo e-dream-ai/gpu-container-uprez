@@ -46,7 +46,7 @@ class InterpolatorService:
                         _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
                         import base64
                         preview_base64 = base64.b64encode(buffer).decode('utf-8')
-                        progress_callback(int((idx + 1) / len(input_frames) * 100), preview_base64)
+                        progress_callback(((idx + 1) / len(input_frames) * 100), preview_base64)
                 except Exception as e:
                     logger.error(f"Failed to copy frame {frame_path}: {e}")
             return
@@ -117,7 +117,7 @@ class InterpolatorService:
                             import base64
                             preview_base64 = base64.b64encode(buffer).decode('utf-8')
                         
-                        progress_callback(int(output_frame_idx / desired_total_frames * 100), preview_base64)
+                        progress_callback((output_frame_idx / desired_total_frames * 100), preview_base64)
                 
                 self._copy_frame(input_frames[-1], output_dir, output_frame_idx)
                 output_frame_idx += 1

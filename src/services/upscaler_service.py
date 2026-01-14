@@ -45,7 +45,7 @@ class UpscalerService:
                         _, buffer = cv2.imencode('.jpg', preview_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
                         import base64
                         preview_base64 = base64.b64encode(buffer).decode('utf-8')
-                        progress_callback(int((idx + 1) / len(input_frames) * 100), preview_base64)
+                        progress_callback(((idx + 1) / len(input_frames) * 100), preview_base64)
                 except Exception as e:
                     logger.error(f"Failed to copy frame {frame_path}: {e}")
             return
@@ -81,7 +81,7 @@ class UpscalerService:
                             import base64
                             preview_base64 = base64.b64encode(buffer).decode('utf-8')
                         
-                        progress_callback(int((i + len(batch)) / len(input_frames) * 100), preview_base64)
+                        progress_callback(((i + len(batch)) / len(input_frames) * 100), preview_base64)
             
             total_time = time.time() - start_time
             logger.info(f"Upscaling completed in {total_time:.2f}s")
