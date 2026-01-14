@@ -236,12 +236,10 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         
         def progress_callback(percent, preview=None):
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-            countdown_ms = int((elapsed_ms / percent) * (100 - percent)) if percent > 0 else 0
             
             progress_data = {
                 "progress": round(float(percent), 1),
-                "render_time_ms": elapsed_ms,
-                "countdown_ms": countdown_ms
+                "render_time_ms": elapsed_ms
             }
             
             if preview:
