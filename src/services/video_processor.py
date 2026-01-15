@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from services.model_loader import ModelLoader
 from services.frame_manager import FrameManager
+from services.preview_encoder import PreviewService
 from services.upscaler_service import UpscalerService
 from services.interpolator_service import InterpolatorService
 from utils.cleanup_manager import CleanupManager
@@ -17,9 +18,10 @@ class VideoProcessorService:
         self.cleanup_manager = cleanup_manager
         
         self.model_loader = ModelLoader()
+        self.preview_service = PreviewService()
         self.frame_manager = FrameManager(temp_dir, cleanup_manager)
-        self.upscaler = UpscalerService(self.model_loader)
-        self.interpolator = InterpolatorService(self.model_loader)
+        self.upscaler = UpscalerService(self.model_loader, self.preview_service)
+        self.interpolator = InterpolatorService(self.model_loader, self.preview_service)
         
         logger.info("VideoProcessorService initialized")
     
