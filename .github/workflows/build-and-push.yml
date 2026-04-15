@@ -13,12 +13,15 @@ on:
         type: string
 
 env:
-  REGISTRY: docker.io
-  IMAGE_NAME: edreamai/video-upscaler
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push:
     runs-on: container-builder
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -27,31 +30,35 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate image metadata
         id: meta
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          TAG_SUFFIX: ${{ github.event.inputs.docker_tag }}
         run: |
+          IMAGE_LOWER=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          BRANCH="${{ github.ref_name }}"
           VERSION="${TIMESTAMP}-${BRANCH}"
 
-          TAG_SUFFIX="${{ github.event.inputs.docker_tag }}"
           if [ -n "$TAG_SUFFIX" ]; then
             VERSION="${VERSION}-${TAG_SUFFIX}"
           fi
 
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "image_tag=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}" >> $GITHUB_OUTPUT
-          echo "latest_tag=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
+          echo "image_tag=${REGISTRY}/${IMAGE_LOWER}:${VERSION}" >> $GITHUB_OUTPUT
+          echo "latest_tag=${REGISTRY}/${IMAGE_LOWER}:latest" >> $GITHUB_OUTPUT
 
       - name: Build and Push Docker Image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -64,10 +71,13 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Output image information
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+          LATEST_TAG: ${{ steps.meta.outputs.latest_tag }}
         run: |
-          echo "✅ Successfully built and pushed:"
-          echo "📦 Image: ${{ steps.meta.outputs.image_tag }}"
-          echo "📦 Latest: ${{ steps.meta.outputs.latest_tag }}"
+          echo "Successfully built and pushed:"
+          echo "Image: ${IMAGE_TAG}"
+          echo "Latest: ${LATEST_TAG}"
           echo ""
-          echo "🚀 Use this image in your RunPod serverless endpoint:"
-          echo "   ${{ steps.meta.outputs.image_tag }}"
+          echo "Use this image in your RunPod serverless endpoint:"
+          echo "   ${IMAGE_TAG}"
