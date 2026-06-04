@@ -1,13 +1,19 @@
 import logging
-import subprocess
+import os
 import re
+import subprocess
 from pathlib import Path
-from typing import List, Optional, Callable
+from typing import Callable, Dict, List, Optional, Tuple
+
 import ffmpeg
 
 from utils.cleanup_manager import CleanupManager
 
 logger = logging.getLogger(__name__)
+
+FALSE_ENV_VALUES = {'0', 'false', 'no'}
+FAST_PNG_COMPRESSION_LEVEL = 0
+NVENC_HEVC_ENCODER = 'hevc_nvenc'
 
 
 class FrameManager:
@@ -40,6 +46,7 @@ class FrameManager:
                     str(frame_pattern),
                     pix_fmt='rgb24',
                     vsync='0',
+                    compression_level=FAST_PNG_COMPRESSION_LEVEL,
                     start_number=0
                 )
             )
@@ -106,43 +113,31 @@ class FrameManager:
                 frame_pattern = frame_dir / "frame_%06d.png"
             
             total_frames = len(frame_files)
-            codec_params = self._get_codec_params(format, quality)
-            
-            input_stream = ffmpeg.input(str(frame_pattern), framerate=fps, start_number=0)
-            output_stream = ffmpeg.output(
-                input_stream,
-                str(output_path),
-                **codec_params
-            )
-            
-            args = output_stream.overwrite_output().get_args()
-            cmd = ['ffmpeg'] + args
-            
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                encoding='utf-8'
-            )
+            codec_params, uses_nvenc = self._get_codec_params(format, quality)
 
-            frame_regex = re.compile(r'frame=\s*(\d+)')
+            try:
+                self._run_encode(
+                    frame_pattern=frame_pattern,
+                    output_path=output_path,
+                    fps=fps,
+                    codec_params=codec_params,
+                    total_frames=total_frames,
+                    progress_callback=progress_callback,
+                )
+            except RuntimeError as e:
+                if not uses_nvenc:
+                    raise
 
-            while True:
-                line = process.stderr.readline()
-                if not line and process.poll() is not None:
-                    break
-                
-                if line:
-                    match = frame_regex.search(line)
-                    if match and progress_callback:
-                        current_frame = int(match.group(1))
-                        percent = min(100, int((current_frame / total_frames) * 100))
-                        progress_callback(percent)
-
-            if process.returncode != 0:
-                stderr = process.stderr.read()
-                raise RuntimeError(f"FFmpeg failed with return code {process.returncode}. Stderr: {stderr}")
+                logger.warning(f"NVENC encode failed; retrying with software encoder: {e}")
+                software_params = self._get_software_codec_params(format, quality)
+                self._run_encode(
+                    frame_pattern=frame_pattern,
+                    output_path=output_path,
+                    fps=fps,
+                    codec_params=software_params,
+                    total_frames=total_frames,
+                    progress_callback=progress_callback,
+                )
             
             if not output_path.exists():
                 raise RuntimeError("Output video file was not created")
@@ -156,8 +151,92 @@ class FrameManager:
             relevant_error = '\n'.join(error_lines[-5:]) if len(error_lines) > 5 else error_msg
             logger.error(f"Video encoding failed: {relevant_error}")
             raise RuntimeError(f"Failed to encode video: {relevant_error}")
-    
-    def _get_codec_params(self, format: str, quality: str) -> dict:
+
+    def _run_encode(
+        self,
+        frame_pattern: Path,
+        output_path: Path,
+        fps: int,
+        codec_params: Dict[str, object],
+        total_frames: int,
+        progress_callback: Optional[Callable[[int], None]] = None,
+    ) -> None:
+        input_stream = ffmpeg.input(str(frame_pattern), framerate=fps, start_number=0)
+        output_stream = ffmpeg.output(
+            input_stream,
+            str(output_path),
+            **codec_params,
+        )
+
+        args = output_stream.overwrite_output().get_args()
+        cmd = ['ffmpeg'] + args
+
+        logger.info(f"Running FFmpeg encode with codec: {codec_params.get('vcodec')}")
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            encoding='utf-8',
+        )
+
+        frame_regex = re.compile(r'frame=\s*(\d+)')
+        stderr_lines = []
+
+        while True:
+            line = process.stderr.readline()
+            if not line and process.poll() is not None:
+                break
+
+            if line:
+                stderr_lines.append(line)
+                match = frame_regex.search(line)
+                if match and progress_callback:
+                    current_frame = int(match.group(1))
+                    percent = min(100, int((current_frame / total_frames) * 100))
+                    progress_callback(percent)
+
+        remaining_stderr = process.stderr.read()
+        if remaining_stderr:
+            stderr_lines.append(remaining_stderr)
+
+        if process.returncode != 0:
+            stderr = ''.join(stderr_lines)
+            error_lines = stderr.strip().split('\n')
+            relevant_error = '\n'.join(error_lines[-8:]) if len(error_lines) > 8 else stderr
+            raise RuntimeError(
+                f"FFmpeg failed with return code {process.returncode}. Stderr: {relevant_error}"
+            )
+
+    def _get_codec_params(self, format: str, quality: str) -> Tuple[Dict[str, object], bool]:
+        use_nvenc = os.getenv('USE_NVENC', '1').lower() not in FALSE_ENV_VALUES
+        if use_nvenc and format == 'mp4' and self._supports_encoder(NVENC_HEVC_ENCODER):
+            return self._get_nvenc_codec_params(quality), True
+
+        return self._get_software_codec_params(format, quality), False
+
+    def _get_nvenc_codec_params(self, quality: str) -> Dict[str, object]:
+        quality_settings = {
+            'low': {'cq': 28, 'preset': 'p3'},
+            'medium': {'cq': 23, 'preset': 'p5'},
+            'high': {'cq': 18, 'preset': 'p6'},
+        }
+
+        settings = quality_settings.get(quality, quality_settings['high'])
+        return {
+            'vcodec': NVENC_HEVC_ENCODER,
+            'pix_fmt': 'yuv420p',
+            'preset': settings['preset'],
+            'tune': 'hq',
+            'rc': 'vbr',
+            'cq:v': settings['cq'],
+            'b:v': '0',
+            'movflags': '+faststart',
+            'vtag': 'hvc1',
+        }
+
+    def _get_software_codec_params(self, format: str, quality: str) -> Dict[str, object]:
         quality_settings = {
             'low': {'crf': 28, 'preset': 'fast'},
             'medium': {'crf': 23, 'preset': 'medium'},
@@ -195,6 +274,20 @@ class FrameManager:
                 'crf': settings['crf'],
                 'preset': settings['preset']
             }
+
+    def _supports_encoder(self, encoder_name: str) -> bool:
+        try:
+            result = subprocess.run(
+                ['ffmpeg', '-hide_banner', '-encoders'],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as e:
+            logger.warning(f"Could not inspect FFmpeg encoders: {e}")
+            return False
+
+        return result.returncode == 0 and encoder_name in result.stdout
     
     def get_video_info(self, video_path: Path) -> dict:
         try:

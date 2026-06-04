@@ -32,7 +32,7 @@ class VideoProcessorService:
         interpolation_factor: int = 2,
         output_fps: int = 0,
         output_format: str = 'mp4',
-        tile_size: int = 512,
+        tile_size: int = 1024,
         tile_padding: int = 10,
         quality: str = 'high',
         progress_callback: Callable[[int, Optional[str]], None] = None

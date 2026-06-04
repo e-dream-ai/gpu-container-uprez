@@ -1,9 +1,13 @@
 import logging
+import os
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
+
 import torch
 
 logger = logging.getLogger(__name__)
+
+FALSE_ENV_VALUES = {'0', 'false', 'no'}
 
 
 class ModelLoader:
@@ -20,6 +24,7 @@ class ModelLoader:
         if torch.cuda.is_available():
             device = torch.device('cuda')
             logger.info(f"Using CUDA device: {torch.cuda.get_device_name()}")
+            torch.backends.cudnn.benchmark = True
             return device
         else:
             device = torch.device('cpu')
@@ -29,7 +34,7 @@ class ModelLoader:
     def load_realesrgan_model(
         self, 
         upscale_factor: int = 2, 
-        tile_size: int = 512, 
+        tile_size: int = 1024, 
         tile_padding: int = 10
     ) -> Any:
         if upscale_factor != 2:
@@ -116,12 +121,26 @@ class ModelLoader:
                         break
 
             if weight_path is None:
-                raise FileNotFoundError("No RIFE weights found. Place a .pkl/.pth under src/vendor/rife/model or /opt/models/rife")
+                raise FileNotFoundError(
+                    "No RIFE weights found. Place a .pkl/.pth under "
+                    "src/vendor/rife/model or /opt/models/rife"
+                )
 
             # Load direct checkpoint file
             model.load_model(str(weight_path), -1)
             model.eval()
             model.device()
+
+            use_fp16 = (
+                self.device.type == 'cuda'
+                and os.getenv('RIFE_FP16', '1').lower() not in FALSE_ENV_VALUES
+            )
+            if use_fp16:
+                model.flownet.half()
+                logger.info("RIFE FP16 inference enabled")
+            else:
+                logger.info("RIFE FP32 inference enabled")
+            model.use_fp16 = use_fp16
             
             self.loaded_models[model_key] = model
             logger.info("RIFE model loaded successfully")

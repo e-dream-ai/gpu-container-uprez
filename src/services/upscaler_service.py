@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import List, Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 from tqdm import tqdm
@@ -9,6 +9,8 @@ from services.model_loader import ModelLoader
 from services.preview_encoder import PreviewService
 
 logger = logging.getLogger(__name__)
+
+FAST_PNG_WRITE_PARAMS = [cv2.IMWRITE_PNG_COMPRESSION, 0]
 
 
 class UpscalerService:
@@ -26,7 +28,7 @@ class UpscalerService:
         input_frames: List[Path],
         output_dir: Path,
         upscale_factor: int = 2,
-        tile_size: int = 512,
+        tile_size: int = 1024,
         tile_padding: int = 10,
         batch_size: int = 1,
         progress_callback: Callable[[int, Optional[str]], None] = None,
@@ -49,7 +51,7 @@ class UpscalerService:
                         continue
 
                     output_path = output_dir / frame_path.name
-                    cv2.imwrite(str(output_path), img)
+                    self._write_frame(output_path, img)
 
                     if progress_callback:
                         preview_base64 = self.preview_service.encode_bgr_to_base64_jpeg(
@@ -130,7 +132,7 @@ class UpscalerService:
                 last_img = img_upscaled
 
                 output_path = output_dir / frame_path.name
-                cv2.imwrite(str(output_path), img_upscaled)
+                self._write_frame(output_path, img_upscaled)
 
             except Exception as e:
                 logger.error(f"Failed to process frame {frame_path}: {e}")
@@ -156,12 +158,17 @@ class UpscalerService:
 
             img_upscaled, _ = upsampler.enhance(img, outscale=upscale_factor)
 
-            cv2.imwrite(str(output_path), img_upscaled)
+            self._write_frame(output_path, img_upscaled)
             return True
 
         except Exception as e:
             logger.error(f"Failed to upscale frame {input_path}: {e}")
             return False
+
+    def _write_frame(self, output_path: Path, img) -> bool:
+        if output_path.suffix.lower() == '.png':
+            return cv2.imwrite(str(output_path), img, FAST_PNG_WRITE_PARAMS)
+        return cv2.imwrite(str(output_path), img)
 
     def get_output_dimensions(
         self, input_width: int, input_height: int, upscale_factor: int

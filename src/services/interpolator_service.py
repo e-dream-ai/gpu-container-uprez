@@ -1,6 +1,7 @@
 import logging
+from contextlib import nullcontext
 from pathlib import Path
-from typing import List, Optional, Tuple, Callable
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -12,6 +13,8 @@ from services.preview_encoder import PreviewService
 
 logger = logging.getLogger(__name__)
 
+FAST_PNG_WRITE_PARAMS = [cv2.IMWRITE_PNG_COMPRESSION, 0]
+
 
 class InterpolatorService:
     def __init__(self, model_loader: ModelLoader, preview_service: PreviewService):
@@ -19,6 +22,7 @@ class InterpolatorService:
         self.preview_service = preview_service
         self._target_size: Optional[Tuple[int, int]] = None
         self._output_size: Optional[Tuple[int, int]] = None
+        self._use_fp16 = False
         logger.info("InterpolatorService initialized")
 
     def interpolate_frames(
@@ -46,7 +50,7 @@ class InterpolatorService:
                         continue
 
                     output_path = output_dir / f"frame_{idx:06d}.png"
-                    cv2.imwrite(str(output_path), img)
+                    self._write_frame(output_path, img)
 
                     if progress_callback:
                         preview_base64 = (
@@ -70,6 +74,7 @@ class InterpolatorService:
 
         logger.info("Loading RIFE model...")
         rife_model = self.model_loader.load_rife_model()
+        self._use_fp16 = bool(getattr(rife_model, 'use_fp16', False))
         logger.info("RIFE model loaded successfully")
 
         try:
@@ -132,7 +137,7 @@ class InterpolatorService:
                     last_intermediate = None
                     for intermediate_frame in intermediate_frames:
                         output_path = output_dir / f"frame_{output_frame_idx:06d}.png"
-                        success = cv2.imwrite(str(output_path), intermediate_frame)
+                        success = self._write_frame(output_path, intermediate_frame)
                         if not success:
                             raise RuntimeError(
                                 f"Failed to write interpolated frame to {output_path}"
@@ -165,7 +170,7 @@ class InterpolatorService:
                         out_h, out_w = self._output_size
                         last_frame = self._resize_to_exact(last_frame, out_h, out_w)
                     if last_frame is not None:
-                        cv2.imwrite(str(output_path), last_frame)
+                        self._write_frame(output_path, last_frame)
                     output_frame_idx += 1
                     pbar.update(1)
 
@@ -258,8 +263,18 @@ class InterpolatorService:
         rife_model,
         timestep: float,
     ) -> np.ndarray:
-        with torch.no_grad():
-            timestep_tensor = torch.tensor([timestep]).to(frame1_tensor.device).float()
+        autocast_context = (
+            torch.autocast(device_type='cuda', dtype=torch.float16)
+            if self._use_fp16 and frame1_tensor.device.type == 'cuda'
+            else nullcontext()
+        )
+
+        with torch.inference_mode(), autocast_context:
+            timestep_tensor = torch.tensor(
+                [timestep],
+                device=frame1_tensor.device,
+                dtype=frame1_tensor.dtype,
+            )
             mid_frame_tensor = rife_model.inference(
                 frame1_tensor, frame2_tensor, timestep_tensor
             )
@@ -268,14 +283,15 @@ class InterpolatorService:
 
     def _frame_to_tensor(self, frame: np.ndarray) -> torch.Tensor:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_tensor = torch.from_numpy(frame_rgb.astype(np.float32) / 255.0)
+        frame_tensor = torch.from_numpy(frame_rgb)
         frame_tensor = frame_tensor.permute(2, 0, 1).unsqueeze(0)
-        if torch.cuda.is_available():
-            frame_tensor = frame_tensor.cuda()
-        return frame_tensor
+
+        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        dtype = torch.float16 if self._use_fp16 and device.type == 'cuda' else torch.float32
+        return frame_tensor.to(device=device, dtype=dtype).div_(255.0)
 
     def _tensor_to_frame(self, tensor: torch.Tensor) -> np.ndarray:
-        frame_tensor = tensor.squeeze(0).cpu()
+        frame_tensor = tensor.squeeze(0).detach().float().clamp_(0.0, 1.0).cpu()
         frame_tensor = frame_tensor.permute(1, 2, 0)
         frame_np = (frame_tensor.numpy() * 255.0).astype(np.uint8)
         frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
@@ -288,7 +304,12 @@ class InterpolatorService:
             if self._output_size is not None:
                 out_h, out_w = self._output_size
                 frame = self._resize_to_exact(frame, out_h, out_w)
-            cv2.imwrite(str(output_path), frame)
+            self._write_frame(output_path, frame)
+
+    def _write_frame(self, output_path: Path, frame: np.ndarray) -> bool:
+        if output_path.suffix.lower() == '.png':
+            return cv2.imwrite(str(output_path), frame, FAST_PNG_WRITE_PARAMS)
+        return cv2.imwrite(str(output_path), frame)
 
     def _calculate_output_frame_count(self, input_count: int, interpolation_factor: int) -> int:
         if input_count < 2:
