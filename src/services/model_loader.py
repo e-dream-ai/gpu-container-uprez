@@ -8,7 +8,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 FALSE_ENV_VALUES = {'0', 'false', 'no'}
-_TORCH_COMPILE_MODE = os.getenv('TORCH_COMPILE_MODE', 'reduce-overhead')
+_TORCH_COMPILE_MODE = os.getenv('TORCH_COMPILE_MODE', 'max-autotune')
 
 
 class ModelLoader:
@@ -143,8 +143,6 @@ class ModelLoader:
                 logger.info("RIFE FP32 inference enabled")
             model.use_fp16 = use_fp16
 
-            model.flownet = self._apply_torch_compile(model.flownet, 'rife_flownet')
-
             self.loaded_models[model_key] = model
             logger.info("RIFE model loaded successfully")
             
@@ -159,20 +157,9 @@ class ModelLoader:
             return model
         if os.getenv('TORCH_COMPILE', '1').lower() in FALSE_ENV_VALUES:
             return model
-
-        backend = 'inductor'
-        if os.getenv('USE_TENSORRT', '0').lower() not in FALSE_ENV_VALUES:
-            try:
-                import torch_tensorrt  # noqa: F401
-                backend = 'tensorrt'
-                logger.info(f"TensorRT backend selected for {name}")
-            except ImportError:
-                logger.info(f"torch_tensorrt not installed, falling back to inductor for {name}")
-
         try:
-            kwargs = {'mode': _TORCH_COMPILE_MODE} if backend == 'inductor' else {}
-            compiled = torch.compile(model, backend=backend, **kwargs)
-            logger.info(f"torch.compile(backend={backend!r}) applied to {name}")
+            compiled = torch.compile(model, mode=_TORCH_COMPILE_MODE)
+            logger.info(f"torch.compile(mode={_TORCH_COMPILE_MODE!r}) applied to {name}")
             return compiled
         except Exception as e:
             logger.warning(f"torch.compile skipped for {name}: {e}")
