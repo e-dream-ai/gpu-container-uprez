@@ -8,7 +8,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 FALSE_ENV_VALUES = {'0', 'false', 'no'}
-_TORCH_COMPILE_MODE = os.getenv('TORCH_COMPILE_MODE', 'max-autotune')
+_TORCH_COMPILE_MODE = os.getenv('TORCH_COMPILE_MODE', 'reduce-overhead')
 
 
 class ModelLoader:
