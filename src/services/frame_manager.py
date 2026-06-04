@@ -21,6 +21,8 @@ class FrameManager:
     def __init__(self, temp_dir: Path, cleanup_manager: CleanupManager):
         self.temp_dir = temp_dir
         self.cleanup_manager = cleanup_manager
+        self.last_decode_mode = "unknown"
+        self.last_encode_codec = "unknown"
         logger.info("FrameManager initialized")
     
     def extract_frames(self, video_path: Path, output_dir: Optional[Path] = None, fps: Optional[float] = None) -> Path:
@@ -66,6 +68,7 @@ class FrameManager:
         if use_hwaccel:
             try:
                 _build_stream(True).run(capture_stdout=True, capture_stderr=True)
+                self.last_decode_mode = "cuda"
                 logger.debug("Frame extraction used CUDA hwaccel")
                 return
             except ffmpeg.Error as e:
@@ -73,6 +76,7 @@ class FrameManager:
                 logger.warning(f"CUDA hwaccel decode failed, retrying with software: {warn}")
 
         _build_stream(False).run(capture_stdout=True, capture_stderr=True)
+        self.last_decode_mode = "software"
 
     def get_frame_paths(self, frame_dir: Path) -> List[Path]:
         frame_paths = sorted(frame_dir.glob("frame_*.png"))
@@ -120,6 +124,7 @@ class FrameManager:
             
             total_frames = len(frame_files)
             codec_params, uses_nvenc = self._get_codec_params(format, quality)
+            self.last_encode_codec = str(codec_params.get('vcodec', 'unknown'))
 
             try:
                 self._run_encode(
@@ -136,6 +141,7 @@ class FrameManager:
 
                 logger.warning(f"NVENC encode failed; retrying with software encoder: {e}")
                 software_params = self._get_software_codec_params(format, quality)
+                self.last_encode_codec = str(software_params.get('vcodec', 'unknown'))
                 self._run_encode(
                     frame_pattern=frame_pattern,
                     output_path=output_path,
