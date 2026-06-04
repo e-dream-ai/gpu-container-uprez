@@ -75,7 +75,6 @@ class ModelLoader:
                 gpu_id=0 if self.device.type == 'cuda' else None
             )
             
-            upsampler.model = self._apply_torch_compile(upsampler.model, 'Real-ESRGAN')
             self.loaded_models[model_key] = upsampler
             logger.info(f"Real-ESRGAN model loaded successfully: {model_key}")
 
