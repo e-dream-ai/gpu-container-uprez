@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 FALSE_ENV_VALUES = {'0', 'false', 'no'}
 FAST_PNG_COMPRESSION_LEVEL = 0
 NVENC_HEVC_ENCODER = 'hevc_nvenc'
+USE_HWACCEL_DECODE = os.getenv('USE_HWACCEL_DECODE', '1').lower() not in FALSE_ENV_VALUES
 
 
 class FrameManager:
@@ -32,35 +33,16 @@ class FrameManager:
         
         frame_pattern = output_dir / "frame_%06d.png"
         
+        if fps is not None:
+            logger.info(f"Ignoring requested extraction fps={fps}; extracting at native rate")
+
         try:
             logger.info(f"Extracting frames from {video_path}")
-            
-            input_stream = ffmpeg.input(str(video_path))
-            # Extract at native frame rate; avoid resampling/duplication. Ensure no vsync-induced dup/drop.
-            if fps is not None:
-                logger.info(f"Ignoring requested extraction fps={fps}; extracting at native rate")
-            output_stream = (
-                ffmpeg
-                .output(
-                    input_stream,
-                    str(frame_pattern),
-                    pix_fmt='rgb24',
-                    vsync='0',
-                    compression_level=FAST_PNG_COMPRESSION_LEVEL,
-                    start_number=0
-                )
-            )
-
-            (
-                output_stream
-                .overwrite_output()
-                .run(capture_stdout=True, capture_stderr=True)
-            )
-            
+            self._run_extract(video_path, frame_pattern, use_hwaccel=USE_HWACCEL_DECODE)
             frame_count = len(list(output_dir.glob("frame_*.png")))
             logger.info(f"Extracted {frame_count} frames to {output_dir}")
             return output_dir
-            
+
         except ffmpeg.Error as e:
             error_msg = e.stderr.decode() if e.stderr else str(e)
             error_lines = error_msg.strip().split('\n')
@@ -68,6 +50,30 @@ class FrameManager:
             logger.error(f"Frame extraction failed: {relevant_error}")
             raise RuntimeError(f"Failed to extract frames: {relevant_error}")
     
+    def _run_extract(self, video_path: Path, frame_pattern: Path, use_hwaccel: bool) -> None:
+        def _build_stream(hwaccel: bool):
+            kwargs = {'hwaccel': 'cuda'} if hwaccel else {}
+            input_stream = ffmpeg.input(str(video_path), **kwargs)
+            return ffmpeg.output(
+                input_stream,
+                str(frame_pattern),
+                pix_fmt='rgb24',
+                vsync='0',
+                compression_level=FAST_PNG_COMPRESSION_LEVEL,
+                start_number=0,
+            ).overwrite_output()
+
+        if use_hwaccel:
+            try:
+                _build_stream(True).run(capture_stdout=True, capture_stderr=True)
+                logger.debug("Frame extraction used CUDA hwaccel")
+                return
+            except ffmpeg.Error as e:
+                warn = (e.stderr.decode() if e.stderr else str(e)).strip().split('\n')[-1]
+                logger.warning(f"CUDA hwaccel decode failed, retrying with software: {warn}")
+
+        _build_stream(False).run(capture_stdout=True, capture_stderr=True)
+
     def get_frame_paths(self, frame_dir: Path) -> List[Path]:
         frame_paths = sorted(frame_dir.glob("frame_*.png"))
         

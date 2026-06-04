@@ -8,6 +8,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 FALSE_ENV_VALUES = {'0', 'false', 'no'}
+_TORCH_COMPILE_MODE = os.getenv('TORCH_COMPILE_MODE', 'max-autotune')
 
 
 class ModelLoader:
@@ -74,9 +75,10 @@ class ModelLoader:
                 gpu_id=0 if self.device.type == 'cuda' else None
             )
             
+            upsampler.model = self._apply_torch_compile(upsampler.model, 'Real-ESRGAN')
             self.loaded_models[model_key] = upsampler
             logger.info(f"Real-ESRGAN model loaded successfully: {model_key}")
-            
+
             return upsampler
             
         except Exception as e:
@@ -141,7 +143,8 @@ class ModelLoader:
             else:
                 logger.info("RIFE FP32 inference enabled")
             model.use_fp16 = use_fp16
-            
+            model.flownet = self._apply_torch_compile(model.flownet, 'RIFE')
+
             self.loaded_models[model_key] = model
             logger.info("RIFE model loaded successfully")
             
@@ -151,6 +154,19 @@ class ModelLoader:
             logger.error(f"Failed to load RIFE model: {e}")
             raise RuntimeError(f"RIFE model loading failed: {e}")
     
+    def _apply_torch_compile(self, model: Any, name: str) -> Any:
+        if self.device.type != 'cuda':
+            return model
+        if os.getenv('TORCH_COMPILE', '1').lower() in FALSE_ENV_VALUES:
+            return model
+        try:
+            compiled = torch.compile(model, mode=_TORCH_COMPILE_MODE)
+            logger.info(f"torch.compile(mode={_TORCH_COMPILE_MODE!r}) applied to {name}")
+            return compiled
+        except Exception as e:
+            logger.warning(f"torch.compile skipped for {name}: {e}")
+            return model
+
     def unload_model(self, model_key: str) -> None:
         if model_key in self.loaded_models:
             logger.info(f"Unloading model: {model_key}")

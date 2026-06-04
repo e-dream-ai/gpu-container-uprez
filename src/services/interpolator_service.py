@@ -23,6 +23,9 @@ class InterpolatorService:
         self._target_size: Optional[Tuple[int, int]] = None
         self._output_size: Optional[Tuple[int, int]] = None
         self._use_fp16 = False
+        self._transfer_stream: Optional[torch.cuda.Stream] = (
+            torch.cuda.Stream() if torch.cuda.is_available() else None
+        )
         logger.info("InterpolatorService initialized")
 
     def interpolate_frames(
@@ -104,21 +107,37 @@ class InterpolatorService:
 
             with tqdm(total=desired_total_frames, desc="Interpolating frames") as pbar:
                 output_frame_idx = 0
+                num_pairs = len(input_frames) - 1
 
-                for i in range(len(input_frames) - 1):
+                prefetched: Optional[Tuple[torch.Tensor, torch.Tensor]] = (
+                    self._prefetch_pair(input_frames[0], input_frames[1])
+                    if num_pairs > 0
+                    else None
+                )
+
+                for i in range(num_pairs):
                     current_frame = input_frames[i]
                     next_frame = input_frames[i + 1]
 
-                    logger.debug(f"Processing frame pair {i}/{len(input_frames)-1}")
+                    logger.debug(f"Processing frame pair {i}/{num_pairs}")
+
+                    frame1_tensor, frame2_tensor = prefetched  # type: ignore[misc]
+                    
+                    if i + 2 < len(input_frames):
+                        prefetched = self._prefetch_pair(
+                            input_frames[i + 1], input_frames[i + 2]
+                        )
+                    else:
+                        prefetched = None
 
                     self._copy_frame(current_frame, output_dir, output_frame_idx)
                     output_frame_idx += 1
                     pbar.update(1)
 
                     try:
-                        intermediate_frames = self._generate_intermediate_frames(
-                            current_frame,
-                            next_frame,
+                        intermediate_frames = self._generate_intermediate_frames_from_tensors(
+                            frame1_tensor,
+                            frame2_tensor,
                             rife_model,
                             interpolation_factor,
                         )
@@ -197,6 +216,35 @@ class InterpolatorService:
             logger.error(f"Frame interpolation failed: {e}")
             raise RuntimeError(f"Interpolation process failed: {e}")
 
+    def _prefetch_pair(
+        self, path1: Path, path2: Path
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        frame1 = cv2.imread(str(path1))
+        frame2 = cv2.imread(str(path2))
+        if frame1 is None or frame2 is None:
+            raise RuntimeError(f"Could not load frames: {path1}, {path2}")
+        if self._target_size is None:
+            raise RuntimeError("Target size not initialised before prefetching frames")
+
+        target_h, target_w = self._target_size
+        frame1 = self._fit_to_size(frame1, target_h, target_w)
+        frame2 = self._fit_to_size(frame2, target_h, target_w)
+
+        stream_ctx = (
+            torch.cuda.stream(self._transfer_stream)
+            if self._transfer_stream is not None
+            else nullcontext()
+        )
+        with stream_ctx:
+            t1 = self._frame_to_tensor(frame1)
+            t2 = self._frame_to_tensor(frame2)
+
+        # Synchronise so the default stream sees the completed transfers.
+        if self._transfer_stream is not None:
+            torch.cuda.current_stream().wait_stream(self._transfer_stream)
+
+        return t1, t2
+
     def _generate_intermediate_frames(
         self,
         frame1_path: Path,
@@ -204,55 +252,35 @@ class InterpolatorService:
         rife_model,
         interpolation_factor: int,
     ) -> List[np.ndarray]:
-        frame1 = cv2.imread(str(frame1_path))
-        frame2 = cv2.imread(str(frame2_path))
+        t1, t2 = self._prefetch_pair(frame1_path, frame2_path)
+        return self._generate_intermediate_frames_from_tensors(
+            t1, t2, rife_model, interpolation_factor
+        )
 
-        if frame1 is None or frame2 is None:
-            error_msg = f"Could not load frames: {frame1_path}, {frame2_path}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
-
-        if self._target_size is None:
-            raise RuntimeError(
-                "Target size not initialized before generating intermediate frames"
-            )
-        target_h, target_w = self._target_size
-        frame1 = self._fit_to_size(frame1, target_h, target_w)
-        frame2 = self._fit_to_size(frame2, target_h, target_w)
-
-        frame1_tensor = self._frame_to_tensor(frame1)
-        frame2_tensor = self._frame_to_tensor(frame2)
-
+    def _generate_intermediate_frames_from_tensors(
+        self,
+        frame1_tensor: torch.Tensor,
+        frame2_tensor: torch.Tensor,
+        rife_model,
+        interpolation_factor: int,
+    ) -> List[np.ndarray]:
         intermediate_frames: List[np.ndarray] = []
 
-        if interpolation_factor == 2:
+        TIMESTEPS = {
+            2: [0.5],
+            4: [0.25, 0.5, 0.75],
+            8: [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875],
+        }
+        timesteps = TIMESTEPS.get(interpolation_factor, [0.5])
+
+        for t in timesteps:
             mid_frame = self._interpolate_single_frame(
-                frame1_tensor, frame2_tensor, rife_model, 0.5
+                frame1_tensor, frame2_tensor, rife_model, t
             )
             if self._output_size is not None:
                 out_h, out_w = self._output_size
                 mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
             intermediate_frames.append(mid_frame)
-
-        elif interpolation_factor == 4:
-            for t in [0.25, 0.5, 0.75]:
-                mid_frame = self._interpolate_single_frame(
-                    frame1_tensor, frame2_tensor, rife_model, t
-                )
-                if self._output_size is not None:
-                    out_h, out_w = self._output_size
-                    mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
-                intermediate_frames.append(mid_frame)
-
-        elif interpolation_factor == 8:
-            for t in [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]:
-                mid_frame = self._interpolate_single_frame(
-                    frame1_tensor, frame2_tensor, rife_model, t
-                )
-                if self._output_size is not None:
-                    out_h, out_w = self._output_size
-                    mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
-                intermediate_frames.append(mid_frame)
 
         return intermediate_frames
 
@@ -283,11 +311,13 @@ class InterpolatorService:
 
     def _frame_to_tensor(self, frame: np.ndarray) -> torch.Tensor:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_tensor = torch.from_numpy(frame_rgb)
-        frame_tensor = frame_tensor.permute(2, 0, 1).unsqueeze(0)
+        frame_tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1).unsqueeze(0)
 
         device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         dtype = torch.float16 if self._use_fp16 and device.type == 'cuda' else torch.float32
+
+        if device.type == 'cuda':
+            return frame_tensor.pin_memory().to(device=device, dtype=dtype, non_blocking=True).div_(255.0)
         return frame_tensor.to(device=device, dtype=dtype).div_(255.0)
 
     def _tensor_to_frame(self, tensor: torch.Tensor) -> np.ndarray:
