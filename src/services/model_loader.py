@@ -75,6 +75,7 @@ class ModelLoader:
                 gpu_id=0 if self.device.type == 'cuda' else None
             )
             
+            upsampler.model = self._apply_torch_compile(upsampler.model, 'realesrgan')
             self.loaded_models[model_key] = upsampler
             logger.info(f"Real-ESRGAN model loaded successfully: {model_key}")
 
@@ -132,6 +133,8 @@ class ModelLoader:
             model.eval()
             model.device()
 
+            model.flownet = self._apply_torch_compile(model.flownet, 'rife_flownet')
+
             use_fp16 = (
                 self.device.type == 'cuda'
                 and os.getenv('RIFE_FP16', '1').lower() not in FALSE_ENV_VALUES
@@ -157,9 +160,20 @@ class ModelLoader:
             return model
         if os.getenv('TORCH_COMPILE', '1').lower() in FALSE_ENV_VALUES:
             return model
+
+        backend = 'inductor'
+        if os.getenv('USE_TENSORRT', '0').lower() not in FALSE_ENV_VALUES:
+            try:
+                import torch_tensorrt  # noqa: F401
+                backend = 'tensorrt'
+                logger.info(f"TensorRT backend selected for {name}")
+            except ImportError:
+                logger.info(f"torch_tensorrt not installed, falling back to inductor for {name}")
+
         try:
-            compiled = torch.compile(model, mode=_TORCH_COMPILE_MODE)
-            logger.info(f"torch.compile(mode={_TORCH_COMPILE_MODE!r}) applied to {name}")
+            kwargs = {'mode': _TORCH_COMPILE_MODE} if backend == 'inductor' else {}
+            compiled = torch.compile(model, backend=backend, **kwargs)
+            logger.info(f"torch.compile(backend={backend!r}) applied to {name}")
             return compiled
         except Exception as e:
             logger.warning(f"torch.compile skipped for {name}: {e}")
