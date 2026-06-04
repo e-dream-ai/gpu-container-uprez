@@ -142,7 +142,6 @@ class ModelLoader:
             else:
                 logger.info("RIFE FP32 inference enabled")
             model.use_fp16 = use_fp16
-            model.flownet = self._apply_torch_compile(model.flownet, 'RIFE')
 
             self.loaded_models[model_key] = model
             logger.info("RIFE model loaded successfully")
