@@ -75,7 +75,6 @@ class ModelLoader:
                 gpu_id=0 if self.device.type == 'cuda' else None
             )
             
-            upsampler.model = self._apply_torch_compile(upsampler.model, 'realesrgan')
             self.loaded_models[model_key] = upsampler
             logger.info(f"Real-ESRGAN model loaded successfully: {model_key}")
 
@@ -133,8 +132,6 @@ class ModelLoader:
             model.eval()
             model.device()
 
-            model.flownet = self._apply_torch_compile(model.flownet, 'rife_flownet')
-
             use_fp16 = (
                 self.device.type == 'cuda'
                 and os.getenv('RIFE_FP16', '1').lower() not in FALSE_ENV_VALUES
@@ -145,6 +142,8 @@ class ModelLoader:
             else:
                 logger.info("RIFE FP32 inference enabled")
             model.use_fp16 = use_fp16
+
+            model.flownet = self._apply_torch_compile(model.flownet, 'rife_flownet')
 
             self.loaded_models[model_key] = model
             logger.info("RIFE model loaded successfully")
