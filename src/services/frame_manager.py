@@ -299,7 +299,11 @@ class FrameManager:
                 capture_output=True,
                 check=False,
             )
-            return result.returncode == 0
+            if result.returncode != 0:
+                reason = result.stderr.decode(errors='replace').strip().split('\n')[-1]
+                logger.warning(f"Encoder {encoder_name} not available: {reason}")
+                return False
+            return True
         except OSError as e:
             logger.warning(f"Could not test encoder {encoder_name}: {e}")
             return False
