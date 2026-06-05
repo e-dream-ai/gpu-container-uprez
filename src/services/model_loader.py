@@ -8,7 +8,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 FALSE_ENV_VALUES = {'0', 'false', 'no'}
-_TORCH_COMPILE_MODE = os.getenv('TORCH_COMPILE_MODE', 'reduce-overhead')
+_TORCH_COMPILE_MODE = os.getenv('TORCH_COMPILE_MODE', 'default')
 
 
 class ModelLoader:
@@ -160,8 +160,8 @@ class ModelLoader:
         if os.getenv('TORCH_COMPILE', '1').lower() in FALSE_ENV_VALUES:
             return model
         try:
-            compiled = torch.compile(model, mode=_TORCH_COMPILE_MODE, options={"triton.cudagraphs": False})
-            logger.info(f"torch.compile(mode={_TORCH_COMPILE_MODE!r}, cudagraphs=off) applied to {name}")
+            compiled = torch.compile(model, mode=_TORCH_COMPILE_MODE)
+            logger.info(f"torch.compile(mode={_TORCH_COMPILE_MODE!r}) applied to {name}")
             return compiled
         except Exception as e:
             logger.warning(f"torch.compile skipped for {name}: {e}")
