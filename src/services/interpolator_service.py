@@ -290,7 +290,9 @@ class InterpolatorService:
 
     def _copy_frame(self, source_path: Path, output_dir: Path, frame_idx: int) -> None:
         output_path = output_dir / f"frame_{frame_idx:06d}.png"
-        frame = cv2.imread(str(source_path))
+        frame = self._bgr_cache.get(source_path) if self._bgr_cache is not None else None
+        if frame is None:
+            frame = cv2.imread(str(source_path))
         if frame is not None:
             if self._output_size is not None:
                 out_h, out_w = self._output_size
@@ -306,7 +308,9 @@ class InterpolatorService:
         max_h: Optional[int] = None
         max_w: Optional[int] = None
         for frame_path in frames:
-            img = cv2.imread(str(frame_path))
+            img = self._bgr_cache.get(frame_path) if self._bgr_cache is not None else None
+            if img is None:
+                img = cv2.imread(str(frame_path))
             if img is None:
                 continue
             h, w = img.shape[:2]
