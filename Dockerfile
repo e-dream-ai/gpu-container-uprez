@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 # Environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -18,9 +18,9 @@ RUN apt-get update && apt-get install -y \
 
 # Install PyTorch first (required as build dependency for basicsr and others)
 RUN pip install --default-timeout=100 --no-cache-dir \
-    torch==2.0.1 \
-    torchvision==0.15.2 \
-    --extra-index-url https://download.pytorch.org/whl/cu118
+    torch==2.4.0 \
+    torchvision==0.19.0 \
+    --extra-index-url https://download.pytorch.org/whl/cu124
 
 # Create directories
 RUN mkdir -p /opt/models/realesrgan /opt/models/rife /opt/app $TEMP_DIR
@@ -39,6 +39,9 @@ COPY requirements.txt ./
 
 # Install remaining requirements
 RUN pip install --default-timeout=100 --no-cache-dir -r requirements.txt
+
+RUN grep -rl "torchvision.transforms.functional_tensor" /usr/local/lib/python3.10/dist-packages/ \
+    | xargs -r sed -i 's/torchvision.transforms.functional_tensor/torchvision.transforms.functional/g'
 
 # Set entrypoint
 CMD ["python", "-u", "src/handler.py"]

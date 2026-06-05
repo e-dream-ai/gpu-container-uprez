@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
@@ -15,6 +16,14 @@ logger = logging.getLogger(__name__)
 
 FAST_PNG_WRITE_PARAMS = [cv2.IMWRITE_PNG_COMPRESSION, 0]
 
+DEFAULT_RIFE_BATCH_SIZE = max(1, int(os.getenv('RIFE_BATCH_SIZE', '4')))
+
+TIMESTEPS = {
+    2: [0.5],
+    4: [0.25, 0.5, 0.75],
+    8: [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875],
+}
+
 
 class InterpolatorService:
     def __init__(self, model_loader: ModelLoader, preview_service: PreviewService):
@@ -23,9 +32,6 @@ class InterpolatorService:
         self._target_size: Optional[Tuple[int, int]] = None
         self._output_size: Optional[Tuple[int, int]] = None
         self._use_fp16 = False
-        self._transfer_stream: Optional[torch.cuda.Stream] = (
-            torch.cuda.Stream() if torch.cuda.is_available() else None
-        )
         logger.info("InterpolatorService initialized")
 
     def interpolate_frames(
@@ -33,6 +39,7 @@ class InterpolatorService:
         input_frames: List[Path],
         output_dir: Path,
         interpolation_factor: int = 2,
+        batch_size: Optional[int] = None,
         progress_callback: Callable[[int, Optional[str]], None] = None,
         preview_max_side: Optional[int] = None,
         preview_jpeg_quality: Optional[int] = None,
@@ -71,8 +78,13 @@ class InterpolatorService:
                     logger.error(f"Failed to copy frame {frame_path}: {e}")
             return
 
+        if batch_size is None:
+            batch_size = DEFAULT_RIFE_BATCH_SIZE
+        batch_size = max(1, batch_size)
+
         logger.info(
-            f"Interpolating {len(input_frames)} frames with factor {interpolation_factor}x"
+            f"Interpolating {len(input_frames)} frames with factor "
+            f"{interpolation_factor}x (batch_size={batch_size})"
         )
 
         logger.info("Loading RIFE model...")
@@ -94,6 +106,7 @@ class InterpolatorService:
                 f"Using target frame size (HxW): {self._target_size[0]}x{self._target_size[1]}"
             )
 
+            self._output_size = None
             try:
                 first_img = cv2.imread(str(input_frames[0]))
                 if first_img is not None:
@@ -103,95 +116,47 @@ class InterpolatorService:
             except Exception:
                 self._output_size = None
 
-            desired_total_frames = len(input_frames) * max(1, interpolation_factor)
+            num_inputs = len(input_frames)
+            factor = max(1, interpolation_factor)
+            desired_total_frames = num_inputs * factor
+            timesteps = TIMESTEPS.get(interpolation_factor, [0.5])
 
+            for i in range(num_inputs):
+                self._copy_frame(input_frames[i], output_dir, i * factor)
+            for pos in range((num_inputs - 1) * factor + 1, desired_total_frames):
+                self._copy_frame(input_frames[-1], output_dir, pos)
+
+            work_items: List[Tuple[int, int, float, int]] = []
+            for i in range(num_inputs - 1):
+                for k, t in enumerate(timesteps):
+                    out_pos = i * factor + 1 + k
+                    work_items.append((i, i + 1, t, out_pos))
+
+            total_items = len(work_items)
             with tqdm(total=desired_total_frames, desc="Interpolating frames") as pbar:
-                output_frame_idx = 0
-                num_pairs = len(input_frames) - 1
+                pbar.update(desired_total_frames - total_items)
 
-                prefetched: Optional[Tuple[torch.Tensor, torch.Tensor]] = (
-                    self._prefetch_pair(input_frames[0], input_frames[1])
-                    if num_pairs > 0
-                    else None
-                )
+                done_items = 0
+                for start in range(0, total_items, batch_size):
+                    chunk = work_items[start : start + batch_size]
+                    last_frame_bgr = self._process_interpolation_chunk(
+                        chunk, input_frames, output_dir, rife_model
+                    )
+                    done_items += len(chunk)
+                    pbar.update(len(chunk))
 
-                for i in range(num_pairs):
-                    current_frame = input_frames[i]
-                    next_frame = input_frames[i + 1]
-
-                    logger.debug(f"Processing frame pair {i}/{num_pairs}")
-
-                    frame1_tensor, frame2_tensor = prefetched  # type: ignore[misc]
-                    
-                    if i + 2 < len(input_frames):
-                        prefetched = self._prefetch_pair(
-                            input_frames[i + 1], input_frames[i + 2]
-                        )
-                    else:
-                        prefetched = None
-
-                    self._copy_frame(current_frame, output_dir, output_frame_idx)
-                    output_frame_idx += 1
-                    pbar.update(1)
-
-                    try:
-                        intermediate_frames = self._generate_intermediate_frames_from_tensors(
-                            frame1_tensor,
-                            frame2_tensor,
-                            rife_model,
-                            interpolation_factor,
-                        )
-                        logger.debug(
-                            f"Generated {len(intermediate_frames)} intermediate frames for pair {i}"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "Failed to generate intermediate frames for pair "
-                            f"{i} ({current_frame} -> {next_frame}): {e}"
-                        )
-                        raise RuntimeError(
-                            f"Interpolation failed at frame pair {i}: {e}"
-                        )
-
-                    last_intermediate = None
-                    for intermediate_frame in intermediate_frames:
-                        output_path = output_dir / f"frame_{output_frame_idx:06d}.png"
-                        success = self._write_frame(output_path, intermediate_frame)
-                        if not success:
-                            raise RuntimeError(
-                                f"Failed to write interpolated frame to {output_path}"
-                            )
-                        last_intermediate = intermediate_frame
-                        output_frame_idx += 1
-                        pbar.update(1)
-
-                    if progress_callback:
+                    if progress_callback and last_frame_bgr is not None:
                         preview_base64 = (
                             self.preview_service.encode_bgr_to_base64_jpeg(
-                                last_intermediate,
+                                last_frame_bgr,
                                 max_side=preview_max_side,
                                 jpeg_quality=preview_jpeg_quality,
                             )
                         )
                         progress_callback(
-                            int((output_frame_idx / desired_total_frames * 100)),
+                            int(done_items / max(1, total_items) * 100),
                             preview_base64,
                         )
-
-                self._copy_frame(input_frames[-1], output_dir, output_frame_idx)
-                output_frame_idx += 1
-                pbar.update(1)
-
-                while output_frame_idx < desired_total_frames:
-                    output_path = output_dir / f"frame_{output_frame_idx:06d}.png"
-                    last_frame = cv2.imread(str(input_frames[-1]))
-                    if last_frame is not None and self._output_size is not None:
-                        out_h, out_w = self._output_size
-                        last_frame = self._resize_to_exact(last_frame, out_h, out_w)
-                    if last_frame is not None:
-                        self._write_frame(output_path, last_frame)
-                    output_frame_idx += 1
-                    pbar.update(1)
 
                 if progress_callback:
                     progress_callback(100, None)
@@ -199,7 +164,7 @@ class InterpolatorService:
             total_time = time.time() - start_time
             logger.info(f"Interpolation completed in {total_time:.2f}s")
             logger.info(
-                f"Generated {desired_total_frames} frames from {len(input_frames)} input frames"
+                f"Generated {desired_total_frames} frames from {num_inputs} input frames"
             )
 
             actual_frames = list(output_dir.glob("frame_*.png"))
@@ -216,109 +181,98 @@ class InterpolatorService:
             logger.error(f"Frame interpolation failed: {e}")
             raise RuntimeError(f"Interpolation process failed: {e}")
 
-    def _prefetch_pair(
-        self, path1: Path, path2: Path
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        frame1 = cv2.imread(str(path1))
-        frame2 = cv2.imread(str(path2))
-        if frame1 is None or frame2 is None:
-            raise RuntimeError(f"Could not load frames: {path1}, {path2}")
-        if self._target_size is None:
-            raise RuntimeError("Target size not initialised before prefetching frames")
-
-        target_h, target_w = self._target_size
-        frame1 = self._fit_to_size(frame1, target_h, target_w)
-        frame2 = self._fit_to_size(frame2, target_h, target_w)
-
-        stream_ctx = (
-            torch.cuda.stream(self._transfer_stream)
-            if self._transfer_stream is not None
-            else nullcontext()
-        )
-        with stream_ctx:
-            t1 = self._frame_to_tensor(frame1)
-            t2 = self._frame_to_tensor(frame2)
-
-        # Synchronise so the default stream sees the completed transfers.
-        if self._transfer_stream is not None:
-            torch.cuda.current_stream().wait_stream(self._transfer_stream)
-
-        return t1, t2
-
-    def _generate_intermediate_frames(
+    def _process_interpolation_chunk(
         self,
-        frame1_path: Path,
-        frame2_path: Path,
+        chunk: List[Tuple[int, int, float, int]],
+        input_frames: List[Path],
+        output_dir: Path,
         rife_model,
-        interpolation_factor: int,
-    ) -> List[np.ndarray]:
-        t1, t2 = self._prefetch_pair(frame1_path, frame2_path)
-        return self._generate_intermediate_frames_from_tensors(
-            t1, t2, rife_model, interpolation_factor
-        )
+    ) -> Optional[np.ndarray]:
+        cache: dict = {}
 
-    def _generate_intermediate_frames_from_tensors(
-        self,
-        frame1_tensor: torch.Tensor,
-        frame2_tensor: torch.Tensor,
-        rife_model,
-        interpolation_factor: int,
-    ) -> List[np.ndarray]:
-        intermediate_frames: List[np.ndarray] = []
+        def get_tensor(idx: int) -> torch.Tensor:
+            if idx not in cache:
+                cache[idx] = self._load_frame_tensor(input_frames[idx])
+            return cache[idx]
 
-        TIMESTEPS = {
-            2: [0.5],
-            4: [0.25, 0.5, 0.75],
-            8: [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875],
-        }
-        timesteps = TIMESTEPS.get(interpolation_factor, [0.5])
+        img0 = torch.stack([get_tensor(item[0]) for item in chunk])
+        img1 = torch.stack([get_tensor(item[1]) for item in chunk])
+        timesteps = torch.tensor(
+            [item[2] for item in chunk],
+            device=img0.device,
+            dtype=img0.dtype,
+        ).view(-1, 1, 1, 1)
 
-        for t in timesteps:
-            mid_frame = self._interpolate_single_frame(
-                frame1_tensor, frame2_tensor, rife_model, t
-            )
+        output = self._run_rife_with_oom_split(rife_model, img0, img1, timesteps)
+
+        last_frame_bgr: Optional[np.ndarray] = None
+        for b, item in enumerate(chunk):
+            out_pos = item[3]
+            frame = self._tensor_to_frame(output[b : b + 1])
             if self._output_size is not None:
-                out_h, out_w = self._output_size
-                mid_frame = self._resize_to_exact(mid_frame, out_h, out_w)
-            intermediate_frames.append(mid_frame)
+                frame = self._resize_to_exact(frame, *self._output_size)
+            output_path = output_dir / f"frame_{out_pos:06d}.png"
+            if not self._write_frame(output_path, frame):
+                raise RuntimeError(
+                    f"Failed to write interpolated frame to {output_path}"
+                )
+            last_frame_bgr = frame
 
-        return intermediate_frames
+        return last_frame_bgr
 
-    def _interpolate_single_frame(
+    def _run_rife_with_oom_split(
         self,
-        frame1_tensor: torch.Tensor,
-        frame2_tensor: torch.Tensor,
         rife_model,
-        timestep: float,
-    ) -> np.ndarray:
+        img0: torch.Tensor,
+        img1: torch.Tensor,
+        timesteps: torch.Tensor,
+    ) -> torch.Tensor:
         autocast_context = (
             torch.autocast(device_type='cuda', dtype=torch.float16)
-            if self._use_fp16 and frame1_tensor.device.type == 'cuda'
+            if self._use_fp16 and img0.device.type == 'cuda'
             else nullcontext()
         )
-
-        with torch.inference_mode(), autocast_context:
-            timestep_tensor = torch.tensor(
-                [timestep],
-                device=frame1_tensor.device,
-                dtype=frame1_tensor.dtype,
+        try:
+            with torch.inference_mode(), autocast_context:
+                return rife_model.inference(img0, img1, timesteps)
+        except torch.cuda.OutOfMemoryError:
+            if img0.shape[0] == 1:
+                raise
+            torch.cuda.empty_cache()
+            mid = img0.shape[0] // 2
+            logger.warning(
+                f"CUDA OOM interpolating batch of {img0.shape[0]}; "
+                f"retrying as {mid}+{img0.shape[0] - mid}"
             )
-            mid_frame_tensor = rife_model.inference(
-                frame1_tensor, frame2_tensor, timestep_tensor
+            first = self._run_rife_with_oom_split(
+                rife_model, img0[:mid], img1[:mid], timesteps[:mid]
             )
-            mid_frame = self._tensor_to_frame(mid_frame_tensor)
-            return mid_frame
+            second = self._run_rife_with_oom_split(
+                rife_model, img0[mid:], img1[mid:], timesteps[mid:]
+            )
+            return torch.cat((first, second), dim=0)
 
-    def _frame_to_tensor(self, frame: np.ndarray) -> torch.Tensor:
+    def _load_frame_tensor(self, path: Path) -> torch.Tensor:
+        frame = cv2.imread(str(path))
+        if frame is None:
+            raise RuntimeError(f"Could not load frame: {path}")
+        if self._target_size is None:
+            raise RuntimeError("Target size not initialised before loading frames")
+
+        target_h, target_w = self._target_size
+        frame = self._fit_to_size(frame, target_h, target_w)
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1).unsqueeze(0)
+        tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1)
 
-        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-        dtype = torch.float16 if self._use_fp16 and device.type == 'cuda' else torch.float32
-
-        if device.type == 'cuda':
-            return frame_tensor.pin_memory().to(device=device, dtype=dtype, non_blocking=True).div_(255.0)
-        return frame_tensor.to(device=device, dtype=dtype).div_(255.0)
+        device = (
+            torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        )
+        dtype = (
+            torch.float16
+            if self._use_fp16 and device.type == 'cuda'
+            else torch.float32
+        )
+        return tensor.to(device=device, dtype=dtype).div_(255.0)
 
     def _tensor_to_frame(self, tensor: torch.Tensor) -> np.ndarray:
         frame_tensor = tensor.squeeze(0).detach().float().clamp_(0.0, 1.0).cpu()
@@ -340,12 +294,6 @@ class InterpolatorService:
         if output_path.suffix.lower() == '.png':
             return cv2.imwrite(str(output_path), frame, FAST_PNG_WRITE_PARAMS)
         return cv2.imwrite(str(output_path), frame)
-
-    def _calculate_output_frame_count(self, input_count: int, interpolation_factor: int) -> int:
-        if input_count < 2:
-            return input_count
-        intermediate_count = (input_count - 1) * (interpolation_factor - 1)
-        return input_count + intermediate_count
 
     def _determine_safe_size(self, frames: List[Path]) -> Optional[Tuple[int, int]]:
         max_h: Optional[int] = None

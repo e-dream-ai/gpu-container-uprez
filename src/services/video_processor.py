@@ -56,6 +56,8 @@ class VideoProcessorService:
             "use_nvenc": os.getenv("USE_NVENC", "1").lower() not in FALSE_ENV_VALUES,
             "use_hwaccel_decode": os.getenv("USE_HWACCEL_DECODE", "1").lower() not in FALSE_ENV_VALUES,
             "torch_compile": os.getenv("TORCH_COMPILE", "1").lower() not in FALSE_ENV_VALUES,
+            "upscale_batch_size": max(1, int(os.getenv("UPSCALE_BATCH_SIZE", "4"))),
+            "rife_batch_size": max(1, int(os.getenv("RIFE_BATCH_SIZE", "4"))),
         }
 
         if torch.cuda.is_available():
