@@ -1,7 +1,8 @@
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Callable, Iterator, List, Optional, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -42,7 +43,7 @@ class UpscalerService:
         progress_callback: Callable[[int, Optional[str]], None] = None,
         preview_max_side: Optional[int] = None,
         preview_jpeg_quality: Optional[int] = None,
-    ) -> None:
+    ) -> Optional[Dict[Path, np.ndarray]]:
         if not input_frames:
             logger.warning("No input frames provided for upscaling")
             return
@@ -103,20 +104,31 @@ class UpscalerService:
             total = len(input_frames)
             done = 0
 
-            with tqdm(total=total, desc="Upscaling frames") as pbar:
-                for batch in self._iter_size_batches(input_frames, batch_size):
-                    paths = [path for path, _ in batch]
-                    imgs = [img for _, img in batch]
+            frame_cache: Dict[Path, np.ndarray] = {}
+            batch_iter = self._iter_size_batches(input_frames, batch_size)
 
+            def _fetch_next(it):
+                return next(it, None)
+
+            with tqdm(total=total, desc="Upscaling frames") as pbar, \
+                 ThreadPoolExecutor(max_workers=1) as prefetch_pool:
+                current_batch = next(batch_iter, None)
+                while current_batch is not None:
+                    next_future = prefetch_pool.submit(_fetch_next, batch_iter)
+
+                    paths = [path for path, _ in current_batch]
+                    imgs = [img for _, img in current_batch]
                     upscaled = self._upscale_image_batch(upsampler, imgs)
 
                     last_img = None
                     for path, up_img in zip(paths, upscaled):
-                        self._write_frame(output_dir / path.name, up_img)
+                        output_path = output_dir / path.name
+                        self._write_frame(output_path, up_img)
+                        frame_cache[output_path] = up_img
                         last_img = up_img
 
-                    done += len(batch)
-                    pbar.update(len(batch))
+                    done += len(current_batch)
+                    pbar.update(len(current_batch))
 
                     if progress_callback and last_img is not None:
                         preview_base64 = self.preview_service.encode_bgr_to_base64_jpeg(
@@ -126,9 +138,12 @@ class UpscalerService:
                         )
                         progress_callback(int(done / total * 100), preview_base64)
 
+                    current_batch = next_future.result()
+
             total_time = time.time() - start_time
             logger.info(f"Upscaling completed in {total_time:.2f}s")
             logger.info(f"Average time per frame: {total_time/len(input_frames):.3f}s")
+            return frame_cache
 
         except Exception as e:
             logger.error(f"Frame upscaling failed: {e}")

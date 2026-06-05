@@ -2,7 +2,7 @@ import logging
 import os
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -32,6 +32,7 @@ class InterpolatorService:
         self._target_size: Optional[Tuple[int, int]] = None
         self._output_size: Optional[Tuple[int, int]] = None
         self._use_fp16 = False
+        self._bgr_cache: Optional[Dict[Path, np.ndarray]] = None
         logger.info("InterpolatorService initialized")
 
     def interpolate_frames(
@@ -40,6 +41,7 @@ class InterpolatorService:
         output_dir: Path,
         interpolation_factor: int = 2,
         batch_size: Optional[int] = None,
+        frame_cache: Optional[Dict[Path, np.ndarray]] = None,
         progress_callback: Callable[[int, Optional[str]], None] = None,
         preview_max_side: Optional[int] = None,
         preview_jpeg_quality: Optional[int] = None,
@@ -77,6 +79,8 @@ class InterpolatorService:
                 except Exception as e:
                     logger.error(f"Failed to copy frame {frame_path}: {e}")
             return
+
+        self._bgr_cache = frame_cache
 
         if batch_size is None:
             batch_size = DEFAULT_RIFE_BATCH_SIZE
@@ -176,6 +180,7 @@ class InterpolatorService:
                 logger.warning(
                     f"Generated fewer frames than expected: {len(actual_frames)} vs {desired_total_frames}"
                 )
+            self._bgr_cache = None
 
         except Exception as e:
             logger.error(f"Frame interpolation failed: {e}")
@@ -253,7 +258,9 @@ class InterpolatorService:
             return torch.cat((first, second), dim=0)
 
     def _load_frame_tensor(self, path: Path) -> torch.Tensor:
-        frame = cv2.imread(str(path))
+        frame = self._bgr_cache.get(path) if self._bgr_cache is not None else None
+        if frame is None:
+            frame = cv2.imread(str(path))
         if frame is None:
             raise RuntimeError(f"Could not load frame: {path}")
         if self._target_size is None:

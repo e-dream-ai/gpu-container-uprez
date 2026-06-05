@@ -133,7 +133,7 @@ class VideoProcessorService:
                 update_progress(15.0 + (p * 0.35), preview)
 
             stage_start = time.perf_counter()
-            self.upscaler.upscale_frames(
+            frame_cache = self.upscaler.upscale_frames(
                 input_frames=original_frame_paths,
                 output_dir=upscaled_frames_dir,
                 upscale_factor=upscale_factor,
@@ -169,8 +169,10 @@ class VideoProcessorService:
                 input_frames=upscaled_frame_paths,
                 output_dir=interpolated_frames_dir,
                 interpolation_factor=interpolation_factor,
+                frame_cache=frame_cache,
                 progress_callback=interpolation_progress
             )
+            frame_cache = None
             update_progress(90.0)
             
             interpolated_frame_paths = self.frame_manager.get_frame_paths(interpolated_frames_dir)
