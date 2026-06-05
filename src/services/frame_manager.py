@@ -259,12 +259,11 @@ class FrameManager:
         
         if format == 'mp4':
             return {
-                'vcodec': 'libx265',
+                'vcodec': 'libx264',
                 'pix_fmt': 'yuv420p',
                 'crf': settings['crf'],
                 'preset': settings['preset'],
                 'movflags': '+faststart',
-                'vtag': 'hvc1'
             }
         elif format == 'webm':
             return {
@@ -275,13 +274,13 @@ class FrameManager:
             }
         elif format == 'avi':
             return {
-                'vcodec': 'libx265',
+                'vcodec': 'libx264',
                 'pix_fmt': 'yuv420p',
                 'crf': settings['crf']
             }
         else:
             return {
-                'vcodec': 'libx265',
+                'vcodec': 'libx264',
                 'pix_fmt': 'yuv420p',
                 'crf': settings['crf'],
                 'preset': settings['preset']
