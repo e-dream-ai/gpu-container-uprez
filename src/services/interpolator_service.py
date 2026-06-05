@@ -98,10 +98,6 @@ class InterpolatorService:
         logger.info("RIFE model loaded successfully")
 
         try:
-            import time
-
-            start_time = time.time()
-
             self._target_size = self._determine_safe_size(input_frames)
             if self._target_size is None:
                 raise RuntimeError(
@@ -190,8 +186,6 @@ class InterpolatorService:
                 if progress_callback:
                     progress_callback(100, None)
 
-            total_time = time.time() - start_time
-            logger.info(f"Interpolation completed in {total_time:.2f}s")
             logger.info(
                 f"Generated {desired_total_frames} frames from {num_inputs} input frames"
             )

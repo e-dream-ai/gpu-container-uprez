@@ -211,8 +211,7 @@ def get_input_video_path(params: Dict[str, Any], temp_dir: Path) -> Path:
 
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     cleanup_manager = CleanupManager()
-    job_start_time = time.perf_counter()
-    
+
     try:
         _input = job.get("input") or {}
         validated = validate(_input, INPUT_SCHEMA)
@@ -226,10 +225,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         temp_dir = Path(tempfile.mkdtemp(prefix='video_proc_'))
         cleanup_manager.add_directory(temp_dir)
 
-        download_start_time = time.perf_counter()
         input_video_path = get_input_video_path(params, temp_dir)
-        input_load_s = time.perf_counter() - download_start_time
-        logger.info(f"BENCHMARK stage=input_load elapsed_s={input_load_s:.3f}")
         
         processor = VideoProcessorService(
             temp_dir=temp_dir,
@@ -264,18 +260,8 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             progress_callback=progress_callback
         )
 
-        upload_start_time = time.perf_counter()
         download_url = upload_output_video(output_video_path)
-        upload_s = time.perf_counter() - upload_start_time
-        total_job_s = time.perf_counter() - job_start_time
-        logger.info(f"BENCHMARK stage=upload elapsed_s={upload_s:.3f}")
-        logger.info(f"BENCHMARK stage=job_total elapsed_s={total_job_s:.3f}")
 
-        benchmark = dict(processor.last_benchmark)
-        benchmark["input_load_s"] = round(input_load_s, 3)
-        benchmark["upload_s"] = round(upload_s, 3)
-        benchmark["total_job_s"] = round(total_job_s, 3)
-        
         return {
             'status': 'success',
             'download_url': download_url,
@@ -284,8 +270,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
                 'interpolation_factor': params['interpolation_factor'],
                 'output_fps': params['output_fps'],
                 'output_format': params['output_format']
-            },
-            'benchmark': benchmark
+            }
         }
         
     except Exception as e:

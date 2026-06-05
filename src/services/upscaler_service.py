@@ -98,9 +98,6 @@ class UpscalerService:
         )
 
         try:
-            import time
-
-            start_time = time.time()
             total = len(input_frames)
             done = 0
 
@@ -140,9 +137,6 @@ class UpscalerService:
 
                     current_batch = next_future.result()
 
-            total_time = time.time() - start_time
-            logger.info(f"Upscaling completed in {total_time:.2f}s")
-            logger.info(f"Average time per frame: {total_time/len(input_frames):.3f}s")
             return frame_cache
 
         except Exception as e:

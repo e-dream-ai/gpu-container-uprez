@@ -1,10 +1,7 @@
 import logging
 import os
-import time
 from pathlib import Path
-from typing import Callable, Dict, Optional
-
-import torch
+from typing import Callable, Optional
 
 from services.model_loader import ModelLoader
 from services.frame_manager import FrameManager
@@ -15,16 +12,12 @@ from utils.cleanup_manager import CleanupManager
 
 logger = logging.getLogger(__name__)
 
-FALSE_ENV_VALUES = {'0', 'false', 'no'}
-
 
 class VideoProcessorService:
     
     def __init__(self, temp_dir: Path, cleanup_manager: CleanupManager):
         self.temp_dir = temp_dir
         self.cleanup_manager = cleanup_manager
-        self.last_benchmark: Dict[str, object] = {}
-        
         self.model_loader = ModelLoader()
         self.preview_service = PreviewService()
         self.frame_manager = FrameManager(temp_dir, cleanup_manager)
@@ -33,53 +26,6 @@ class VideoProcessorService:
         
         logger.info("VideoProcessorService initialized")
 
-    def _finish_stage(
-        self,
-        stage_timings: Dict[str, float],
-        stage_name: str,
-        start_time: float,
-        **details,
-    ) -> None:
-        elapsed_s = time.perf_counter() - start_time
-        stage_timings[stage_name] = elapsed_s
-        detail_text = " ".join(f"{key}={value}" for key, value in details.items())
-        logger.info(f"BENCHMARK stage={stage_name} elapsed_s={elapsed_s:.3f} {detail_text}".rstrip())
-
-    def _runtime_info(self) -> Dict[str, object]:
-        rife_model = self.model_loader.loaded_models.get("rife")
-        info: Dict[str, object] = {
-            "device": str(self.model_loader.device),
-            "cuda_available": torch.cuda.is_available(),
-            "decode_mode": self.frame_manager.last_decode_mode,
-            "encode_codec": self.frame_manager.last_encode_codec,
-            "rife_fp16": bool(getattr(rife_model, "use_fp16", False)),
-            "use_nvenc": os.getenv("USE_NVENC", "1").lower() not in FALSE_ENV_VALUES,
-            "use_hwaccel_decode": os.getenv("USE_HWACCEL_DECODE", "1").lower() not in FALSE_ENV_VALUES,
-            "torch_compile": os.getenv("TORCH_COMPILE", "1").lower() not in FALSE_ENV_VALUES,
-            "upscale_batch_size": max(1, int(os.getenv("UPSCALE_BATCH_SIZE", "3"))),
-            "rife_batch_size": max(1, int(os.getenv("RIFE_BATCH_SIZE", "3"))),
-        }
-
-        if torch.cuda.is_available():
-            device_index = torch.cuda.current_device()
-            props = torch.cuda.get_device_properties(device_index)
-            info.update(
-                {
-                    "gpu_name": torch.cuda.get_device_name(device_index),
-                    "gpu_total_memory_gb": round(props.total_memory / (1024 ** 3), 2),
-                    "gpu_max_memory_allocated_gb": round(
-                        torch.cuda.max_memory_allocated(device_index) / (1024 ** 3),
-                        2,
-                    ),
-                    "gpu_max_memory_reserved_gb": round(
-                        torch.cuda.max_memory_reserved(device_index) / (1024 ** 3),
-                        2,
-                    ),
-                }
-            )
-
-        return info
-    
     def process_video(
         self,
         input_path: Path,
@@ -96,12 +42,6 @@ class VideoProcessorService:
             if progress_callback:
                 progress_callback(percent, preview)
 
-        pipeline_start = time.perf_counter()
-        stage_timings: Dict[str, float] = {}
-        self.last_benchmark = {}
-        if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
-
         logger.info("Starting video processing pipeline")
         logger.info(f"Input: {input_path}")
         logger.info(f"Upscale: {upscale_factor}x, Interpolation: {interpolation_factor}x")
@@ -109,16 +49,8 @@ class VideoProcessorService:
         try:
             update_progress(5.0)
             logger.info("Step 1: Extracting frames from input video")
-            stage_start = time.perf_counter()
             original_frames_dir = self.frame_manager.extract_frames(input_path)
             original_frame_paths = self.frame_manager.get_frame_paths(original_frames_dir)
-            self._finish_stage(
-                stage_timings,
-                "extract_frames",
-                stage_start,
-                frames=len(original_frame_paths),
-                decode_mode=self.frame_manager.last_decode_mode,
-            )
             
             update_progress(15.0)
             logger.info(f"Extracted {len(original_frame_paths)} frames")
@@ -132,7 +64,6 @@ class VideoProcessorService:
             def upscale_progress(p, preview=None):
                 update_progress(15.0 + (p * 0.35), preview)
 
-            stage_start = time.perf_counter()
             frame_cache = self.upscaler.upscale_frames(
                 input_frames=original_frame_paths,
                 output_dir=upscaled_frames_dir,
@@ -144,16 +75,6 @@ class VideoProcessorService:
             update_progress(50.0)
             
             upscaled_frame_paths = self.frame_manager.get_frame_paths(upscaled_frames_dir)
-            self._finish_stage(
-                stage_timings,
-                "upscale",
-                stage_start,
-                input_frames=len(original_frame_paths),
-                output_frames=len(upscaled_frame_paths),
-                tile_size=tile_size,
-                tile_padding=tile_padding,
-                upscale_factor=upscale_factor,
-            )
             logger.info(f"Upscaled {len(upscaled_frame_paths)} frames")
             
             logger.info("Step 3: Interpolating frames with RIFE")
@@ -164,7 +85,6 @@ class VideoProcessorService:
             def interpolation_progress(p, preview=None):
                 update_progress(50.0 + (p * 0.40), preview)
             
-            stage_start = time.perf_counter()
             self.interpolator.interpolate_frames(
                 input_frames=upscaled_frame_paths,
                 output_dir=interpolated_frames_dir,
@@ -176,18 +96,9 @@ class VideoProcessorService:
             update_progress(90.0)
             
             interpolated_frame_paths = self.frame_manager.get_frame_paths(interpolated_frames_dir)
-            self._finish_stage(
-                stage_timings,
-                "interpolate",
-                stage_start,
-                input_frames=len(upscaled_frame_paths),
-                output_frames=len(interpolated_frame_paths),
-                interpolation_factor=interpolation_factor,
-            )
             logger.info(f"Generated {len(interpolated_frame_paths)} interpolated frames")
             
             logger.info("Step 4: Encoding final video")
-            stage_start = time.perf_counter()
             output_path = self.temp_dir / f"output.{output_format}"
             
             video_info = self.frame_manager.get_video_info(input_path)
@@ -209,49 +120,8 @@ class VideoProcessorService:
                 quality=quality,
                 progress_callback=encoding_progress
             )
-            self._finish_stage(
-                stage_timings,
-                "encode",
-                stage_start,
-                frames=len(interpolated_frame_paths),
-                fps=final_fps,
-                codec=self.frame_manager.last_encode_codec,
-                quality=quality,
-            )
             update_progress(100.0)
 
-            total_elapsed_s = time.perf_counter() - pipeline_start
-            output_size_mb = round(output_path.stat().st_size / (1024 ** 2), 2)
-            self.last_benchmark = {
-                "total_processing_s": round(total_elapsed_s, 3),
-                "stages_s": {key: round(value, 3) for key, value in stage_timings.items()},
-                "input": {
-                    "path": str(input_path),
-                    "width": video_info.get("width"),
-                    "height": video_info.get("height"),
-                    "fps": video_info.get("fps"),
-                    "duration_s": video_info.get("duration"),
-                    "codec": video_info.get("codec"),
-                    "pix_fmt": video_info.get("pix_fmt"),
-                    "frames": len(original_frame_paths),
-                },
-                "output": {
-                    "path": str(output_path),
-                    "format": output_format,
-                    "fps": final_fps,
-                    "frames": len(interpolated_frame_paths),
-                    "size_mb": output_size_mb,
-                },
-                "settings": {
-                    "upscale_factor": upscale_factor,
-                    "interpolation_factor": interpolation_factor,
-                    "tile_size": tile_size,
-                    "tile_padding": tile_padding,
-                    "quality": quality,
-                },
-                "runtime": self._runtime_info(),
-            }
-            logger.info(f"BENCHMARK summary={self.last_benchmark}")
             logger.info(f"Video processing completed: {output_path}")
             return output_path
             
