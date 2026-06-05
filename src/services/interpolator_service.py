@@ -33,6 +33,7 @@ class InterpolatorService:
         self._output_size: Optional[Tuple[int, int]] = None
         self._use_fp16 = False
         self._bgr_cache: Optional[Dict[Path, np.ndarray]] = None
+        self._cpu_tensor_cache: Optional[Dict[int, torch.Tensor]] = None
         logger.info("InterpolatorService initialized")
 
     def interpolate_frames(
@@ -112,7 +113,12 @@ class InterpolatorService:
 
             self._output_size = None
             try:
-                first_img = cv2.imread(str(input_frames[0]))
+                first_img = (
+                    self._bgr_cache.get(input_frames[0])
+                    if self._bgr_cache is not None else None
+                )
+                if first_img is None:
+                    first_img = cv2.imread(str(input_frames[0]))
                 if first_img is not None:
                     h0, w0 = first_img.shape[:2]
                     self._output_size = (h0, w0)
@@ -135,6 +141,25 @@ class InterpolatorService:
                 for k, t in enumerate(timesteps):
                     out_pos = i * factor + 1 + k
                     work_items.append((i, i + 1, t, out_pos))
+
+            _infer_device = (
+                torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+            )
+            _dtype = torch.float16 if self._use_fp16 else torch.float32
+            self._cpu_tensor_cache = {}
+            for idx in range(num_inputs):
+                path = input_frames[idx]
+                frame = self._bgr_cache.get(path) if self._bgr_cache is not None else None
+                if frame is None:
+                    frame = cv2.imread(str(path))
+                if frame is None:
+                    raise RuntimeError(f"Could not load frame for tensor cache: {path}")
+                frame = self._fit_to_size(frame, *self._target_size)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                t = torch.from_numpy(frame_rgb).permute(2, 0, 1).to(dtype=_dtype).div_(255.0)
+                if _infer_device.type == 'cuda':
+                    t = t.pin_memory()
+                self._cpu_tensor_cache[idx] = t
 
             total_items = len(work_items)
             with tqdm(total=desired_total_frames, desc="Interpolating frames") as pbar:
@@ -181,6 +206,7 @@ class InterpolatorService:
                     f"Generated fewer frames than expected: {len(actual_frames)} vs {desired_total_frames}"
                 )
             self._bgr_cache = None
+            self._cpu_tensor_cache = None
 
         except Exception as e:
             logger.error(f"Frame interpolation failed: {e}")
@@ -193,12 +219,12 @@ class InterpolatorService:
         output_dir: Path,
         rife_model,
     ) -> Optional[np.ndarray]:
-        cache: dict = {}
+        _device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
         def get_tensor(idx: int) -> torch.Tensor:
-            if idx not in cache:
-                cache[idx] = self._load_frame_tensor(input_frames[idx])
-            return cache[idx]
+            if self._cpu_tensor_cache is not None and idx in self._cpu_tensor_cache:
+                return self._cpu_tensor_cache[idx].to(_device, non_blocking=True)
+            return self._load_frame_tensor(input_frames[idx])
 
         img0 = torch.stack([get_tensor(item[0]) for item in chunk])
         img1 = torch.stack([get_tensor(item[1]) for item in chunk])
