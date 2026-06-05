@@ -74,8 +74,6 @@ class ModelLoader:
                 half=True if self.device.type == 'cuda' else False,
                 gpu_id=0 if self.device.type == 'cuda' else None
             )
-            upsampler.model = self._apply_torch_compile(upsampler.model, 'realesrgan')
-
             self.loaded_models[model_key] = upsampler
             logger.info(f"Real-ESRGAN model loaded successfully: {model_key}")
 
@@ -132,7 +130,6 @@ class ModelLoader:
             model.load_model(str(weight_path), -1)
             model.eval()
             model.device()
-            model.flownet = self._apply_torch_compile(model.flownet, 'rife')
 
             use_fp16 = (
                 self.device.type == 'cuda'
