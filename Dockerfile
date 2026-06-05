@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 
 # Environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -18,9 +18,9 @@ RUN apt-get update && apt-get install -y \
 
 # Install PyTorch first (required as build dependency for basicsr and others)
 RUN pip install --default-timeout=100 --no-cache-dir \
-    torch==2.4.0 \
-    torchvision==0.19.0 \
-    --extra-index-url https://download.pytorch.org/whl/cu124
+    torch==2.7.0 \
+    torchvision==0.22.0 \
+    --extra-index-url https://download.pytorch.org/whl/cu128
 
 # Create directories
 RUN mkdir -p /opt/models/realesrgan /opt/models/rife /opt/app $TEMP_DIR

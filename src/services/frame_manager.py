@@ -290,16 +290,20 @@ class FrameManager:
     def _supports_encoder(self, encoder_name: str) -> bool:
         try:
             result = subprocess.run(
-                ['ffmpeg', '-hide_banner', '-encoders'],
+                [
+                    'ffmpeg', '-hide_banner',
+                    '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=1',
+                    '-frames:v', '1',
+                    '-c:v', encoder_name,
+                    '-f', 'null', '-',
+                ],
                 capture_output=True,
-                text=True,
                 check=False,
             )
+            return result.returncode == 0
         except OSError as e:
-            logger.warning(f"Could not inspect FFmpeg encoders: {e}")
+            logger.warning(f"Could not test encoder {encoder_name}: {e}")
             return False
-
-        return result.returncode == 0 and encoder_name in result.stdout
     
     def get_video_info(self, video_path: Path) -> dict:
         try:

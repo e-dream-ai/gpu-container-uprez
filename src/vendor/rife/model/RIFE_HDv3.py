@@ -46,10 +46,10 @@ class Model:
         if rank <= 0:
             if torch.cuda.is_available():
                 self.flownet.load_state_dict(
-                    convert(torch.load(model_file)), False)
+                    convert(torch.load(model_file, weights_only=False)), False)
             else:
                 self.flownet.load_state_dict(
-                    convert(torch.load(model_file, map_location='cpu')), False)
+                    convert(torch.load(model_file, map_location='cpu', weights_only=False)), False)
 
     def save_model(self, model_file, rank=0):
         if rank == 0:

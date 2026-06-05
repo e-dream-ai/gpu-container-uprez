@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 FAST_PNG_WRITE_PARAMS = [cv2.IMWRITE_PNG_COMPRESSION, 0]
 
-DEFAULT_UPSCALE_BATCH_SIZE = max(1, int(os.getenv('UPSCALE_BATCH_SIZE', '4')))
+DEFAULT_UPSCALE_BATCH_SIZE = max(1, int(os.getenv('UPSCALE_BATCH_SIZE', '3')))
 
 _MOD_SCALE = 2
 
