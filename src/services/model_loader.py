@@ -16,8 +16,11 @@ class ModelLoader:
     def __init__(self):
         self.device = self._get_device()
         self.loaded_models: Dict[str, Any] = {}
-        self.model_paths = {
-            'realesrgan': Path('/opt/models/realesrgan/RealESRGAN_x2plus.pth')
+        # Real-ESRGAN weights keyed by their native scale factor. Both share the
+        # same RRDBNet architecture; only the scale and weight file differ.
+        self.realesrgan_paths = {
+            2: Path('/opt/models/realesrgan/RealESRGAN_x2plus.pth'),
+            4: Path('/opt/models/realesrgan/RealESRGAN_x4plus.pth'),
         }
         logger.info(f"ModelLoader initialized with device: {self.device}")
     
@@ -38,20 +41,20 @@ class ModelLoader:
         tile_size: int = 1024, 
         tile_padding: int = 10
     ) -> Any:
-        if upscale_factor != 2:
+        if upscale_factor not in self.realesrgan_paths:
             logger.warning(f"Unsupported upscale_factor={upscale_factor}. Falling back to 2x.")
             upscale_factor = 2
 
         model_key = f'realesrgan_x{upscale_factor}'
-        
+
         if model_key in self.loaded_models:
             logger.debug(f"Real-ESRGAN model already loaded: {model_key}")
             return self.loaded_models[model_key]
-        
+
         try:
             from realesrgan import RealESRGANer
             from basicsr.archs.rrdbnet_arch import RRDBNet
-            
+
             logger.info(f"Loading Real-ESRGAN model: {model_key}")
 
             model = RRDBNet(
@@ -60,12 +63,12 @@ class ModelLoader:
                 num_feat=64,
                 num_block=23,
                 num_grow_ch=32,
-                scale=2
+                scale=upscale_factor
             )
-            model_path = self.model_paths['realesrgan']
-            
+            model_path = self.realesrgan_paths[upscale_factor]
+
             upsampler = RealESRGANer(
-                scale=2,
+                scale=upscale_factor,
                 model_path=str(model_path),
                 model=model,
                 tile=tile_size,

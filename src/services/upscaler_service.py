@@ -76,7 +76,7 @@ class UpscalerService:
                     logger.error(f"Failed to copy frame {frame_path}: {e}")
             return
 
-        if upscale_factor != 2:
+        if upscale_factor not in (2, 4):
             logger.warning(
                 f"Unsupported upscale_factor={upscale_factor}. Falling back to 2x."
             )
@@ -222,7 +222,7 @@ class UpscalerService:
         self, input_path: Path, output_path: Path, upscale_factor: int = 2
     ) -> bool:
         try:
-            if upscale_factor != 2:
+            if upscale_factor not in (2, 4):
                 logger.warning(
                     f"Unsupported upscale_factor={upscale_factor}. Falling back to 2x."
                 )

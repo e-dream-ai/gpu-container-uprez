@@ -50,8 +50,8 @@ INPUT_SCHEMA = {
         'type': int,
         'required': False,
         'default': 2,
-        'constraints': lambda x: x in [1, 2],
-        'description': 'Upscaling factor (1x = skip, 2x)'
+        'constraints': lambda x: x in [1, 2, 4],
+        'description': 'Upscaling factor (1x = skip, 2x, or 4x)'
     },
     'interpolation_factor': {
         'type': int,
