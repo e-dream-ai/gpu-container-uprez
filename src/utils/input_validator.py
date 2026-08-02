@@ -49,10 +49,13 @@ class InputValidator:
                 result['errors'].append("Upscale factor must be an integer")
                 return result
         
-        if factor not in [1, 2]:
-            result['errors'].append("Upscale factor must be 1 or 2")
+        if factor not in [1, 2, 4]:
+            result['errors'].append("Upscale factor must be 1, 2, or 4")
             return result
-                
+
+        if factor >= 4:
+            result['warnings'].append(f"{factor}x upscaling significantly increases memory usage and processing time")
+
         result['valid'] = True
         result['value'] = factor
         return result
