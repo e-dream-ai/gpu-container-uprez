@@ -11,12 +11,17 @@ from tqdm import tqdm
 
 from services.model_loader import ModelLoader
 from services.preview_encoder import PreviewService
+from utils.frame_budget import pixel_scaled_batch_size
 
 logger = logging.getLogger(__name__)
 
 FAST_PNG_WRITE_PARAMS = [cv2.IMWRITE_PNG_COMPRESSION, 0]
 
 DEFAULT_RIFE_BATCH_SIZE = max(1, int(os.getenv('RIFE_BATCH_SIZE', '3')))
+
+TENSOR_CACHE_MAX_BYTES = int(
+    float(os.getenv('RIFE_TENSOR_CACHE_MAX_GB', '8')) * (1024 ** 3)
+)
 
 TIMESTEPS = {
     2: [0.5],
@@ -106,6 +111,11 @@ class InterpolatorService:
             logger.info(
                 f"Using target frame size (HxW): {self._target_size[0]}x{self._target_size[1]}"
             )
+            batch_size = pixel_scaled_batch_size(
+                batch_size,
+                self._target_size[0] * self._target_size[1],
+                stage="interpolate",
+            )
 
             self._output_size = None
             try:
@@ -143,6 +153,7 @@ class InterpolatorService:
             )
             _dtype = torch.float16 if self._use_fp16 else torch.float32
             self._cpu_tensor_cache = {}
+            cache_bytes = 0
             for idx in range(num_inputs):
                 path = input_frames[idx]
                 frame = self._bgr_cache.get(path) if self._bgr_cache is not None else None
@@ -153,9 +164,20 @@ class InterpolatorService:
                 frame = self._fit_to_size(frame, *self._target_size)
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 t = torch.from_numpy(frame_rgb).permute(2, 0, 1).to(dtype=_dtype).div_(255.0)
+
+                tensor_bytes = t.element_size() * t.nelement()
+                if cache_bytes + tensor_bytes > TENSOR_CACHE_MAX_BYTES:
+                    logger.info(
+                        f"Tensor cache budget reached at {idx} frames "
+                        f"({cache_bytes / (1024 ** 3):.1f}GB); remaining frames "
+                        f"will be loaded from disk on demand"
+                    )
+                    break
+
                 if _infer_device.type == 'cuda':
                     t = t.pin_memory()
                 self._cpu_tensor_cache[idx] = t
+                cache_bytes += tensor_bytes
 
             total_items = len(work_items)
             with tqdm(total=desired_total_frames, desc="Interpolating frames") as pbar:

@@ -1,19 +1,42 @@
 import logging
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict, List, TypedDict
+
 import validators
 import cv2
 
+from utils.upscale_config import (
+    HEAVY_UPSCALE_THRESHOLD,
+    SUPPORTED_UPSCALE_FACTORS,
+    supported_factors_text,
+)
+
 logger = logging.getLogger(__name__)
+
+MAX_H26X_DIMENSION = 8192
+_H26X_FORMATS = frozenset({'mp4', 'avi'})
+
+_BYTES_PER_PIXEL = 3
+
+
+class ValidationResult(TypedDict, total=False):
+    valid: bool
+    errors: List[str]
+    warnings: List[str]
+    value: Any
+
+
+def _empty_result() -> ValidationResult:
+    return {'valid': False, 'errors': [], 'warnings': []}
 
 
 class InputValidator:
 
-    
+
     @staticmethod
-    def validate_video_url(url: str) -> Dict[str, Any]:
-        result = {'valid': False, 'errors': [], 'warnings': []}
-        
+    def validate_video_url(url: str) -> ValidationResult:
+        result = _empty_result()
+
         if not url or not isinstance(url, str):
             result['errors'].append("Video URL is required and must be a string")
             return result
@@ -39,31 +62,40 @@ class InputValidator:
         return result
     
     @staticmethod
-    def validate_upscale_factor(factor: Any) -> Dict[str, Any]:
-        result = {'valid': False, 'errors': [], 'warnings': []}
-        
+    def validate_upscale_factor(factor: Any) -> ValidationResult:
+        result = _empty_result()
+
+        if isinstance(factor, bool):
+            result['errors'].append("Upscale factor must be an integer")
+            return result
+
         if not isinstance(factor, int):
             try:
                 factor = int(factor)
             except (ValueError, TypeError):
                 result['errors'].append("Upscale factor must be an integer")
                 return result
-        
-        if factor not in [1, 2, 4]:
-            result['errors'].append("Upscale factor must be 1, 2, or 4")
+
+        if factor not in SUPPORTED_UPSCALE_FACTORS:
+            result['errors'].append(
+                f"Upscale factor must be {supported_factors_text()}"
+            )
             return result
 
-        if factor >= 4:
-            result['warnings'].append(f"{factor}x upscaling significantly increases memory usage and processing time")
+        if factor > HEAVY_UPSCALE_THRESHOLD:
+            result['warnings'].append(
+                f"{factor}x upscaling significantly increases memory usage, "
+                f"disk usage and processing time"
+            )
 
         result['valid'] = True
         result['value'] = factor
         return result
     
     @staticmethod
-    def validate_interpolation_factor(factor: Any) -> Dict[str, Any]:
-        result = {'valid': False, 'errors': [], 'warnings': []}
-        
+    def validate_interpolation_factor(factor: Any) -> ValidationResult:
+        result = _empty_result()
+
         if not isinstance(factor, int):
             try:
                 factor = int(factor)
@@ -83,9 +115,9 @@ class InputValidator:
         return result
     
     @staticmethod
-    def validate_output_fps(fps: Any) -> Dict[str, Any]:
-        result = {'valid': False, 'errors': [], 'warnings': []}
-        
+    def validate_output_fps(fps: Any) -> ValidationResult:
+        result = _empty_result()
+
         if not isinstance(fps, (int, float)):
             try:
                 fps = float(fps)
@@ -106,9 +138,9 @@ class InputValidator:
         return result
     
     @staticmethod
-    def validate_output_format(format: Any) -> Dict[str, Any]:
-        result = {'valid': False, 'errors': [], 'warnings': []}
-        
+    def validate_output_format(format: Any) -> ValidationResult:
+        result = _empty_result()
+
         if not isinstance(format, str):
             result['errors'].append("Output format must be a string")
             return result
@@ -201,41 +233,68 @@ class InputValidator:
     def validate_processing_parameters(
         video_info: Dict[str, Any],
         upscale_factor: int,
-        interpolation_factor: int
+        interpolation_factor: int,
+        output_format: str = 'mp4'
     ) -> Dict[str, Any]:
         result = {'valid': True, 'errors': [], 'warnings': [], 'estimates': {}}
-        
+
         if not video_info:
             result['errors'].append("Video information is required")
             result['valid'] = False
             return result
-        
+
         width = video_info.get('width', 0)
         height = video_info.get('height', 0)
         frame_count = video_info.get('frame_count', 0)
-        
+
         output_width = width * upscale_factor
         output_height = height * upscale_factor
         output_frame_count = frame_count * interpolation_factor
-        
+
         upscale_time_per_frame = 0.1 * upscale_factor  # seconds
         interpolation_time_per_frame = 0.05 * interpolation_factor
         estimated_processing_time = frame_count * (upscale_time_per_frame + interpolation_time_per_frame)
-        
+
         frame_size_mb = (width * height * 3) / (1024 * 1024)
         estimated_memory_gb = frame_size_mb * upscale_factor * upscale_factor / 1024 * 2
-        
+
+        output_frame_bytes = output_width * output_height * _BYTES_PER_PIXEL
+        frame_disk_bytes = output_frame_bytes * (frame_count + output_frame_count)
+
         result['estimates'] = {
             'output_width': output_width,
             'output_height': output_height,
             'output_frame_count': output_frame_count,
             'estimated_processing_time_minutes': estimated_processing_time / 60,
-            'estimated_memory_usage_gb': estimated_memory_gb
+            'estimated_memory_usage_gb': estimated_memory_gb,
+            'output_frame_bytes': output_frame_bytes,
+            'estimated_frame_disk_bytes': frame_disk_bytes,
+            'estimated_frame_disk_gb': frame_disk_bytes / (1024 ** 3),
         }
-        
+
+        largest_side = max(output_width, output_height)
+        if output_format in _H26X_FORMATS and largest_side > MAX_H26X_DIMENSION:
+            result['valid'] = False
+            result['errors'].append(
+                f"Output resolution {output_width}x{output_height} exceeds the "
+                f"{MAX_H26X_DIMENSION}px H.264/HEVC limit for '{output_format}'. "
+                f"Reduce upscale_factor (source is {width}x{height}) or use webm."
+            )
+        elif largest_side > MAX_H26X_DIMENSION:
+            result['warnings'].append(
+                f"Output resolution {output_width}x{output_height} exceeds "
+                f"{MAX_H26X_DIMENSION}px - playback support will be limited"
+            )
+
         if output_width > 7680 or output_height > 4320:
             result['warnings'].append("Output resolution exceeds 8K - may cause memory issues")
-        
+
+        if frame_disk_bytes > 0:
+            result['warnings'].append(
+                f"Estimated intermediate frame storage: "
+                f"{frame_disk_bytes / (1024 ** 3):.1f}GB"
+            )
+
         if estimated_processing_time > 3600:
             result['warnings'].append("Estimated processing time exceeds 1 hour")
         
