@@ -12,12 +12,22 @@ from tqdm import tqdm
 
 from services.model_loader import ModelLoader
 from services.preview_encoder import PreviewService
+from utils.frame_budget import pixel_scaled_batch_size
+from utils.upscale_config import (
+    DEFAULT_UPSCALE_FACTOR,
+    MODEL_UPSCALE_FACTORS,
+    SKIP_UPSCALE_FACTOR,
+)
 
 logger = logging.getLogger(__name__)
 
 FAST_PNG_WRITE_PARAMS = [cv2.IMWRITE_PNG_COMPRESSION, 0]
 
 DEFAULT_UPSCALE_BATCH_SIZE = max(1, int(os.getenv('UPSCALE_BATCH_SIZE', '3')))
+
+FRAME_CACHE_MAX_BYTES = int(
+    float(os.getenv('UPSCALE_FRAME_CACHE_MAX_GB', '8')) * (1024 ** 3)
+)
 
 _MOD_SCALE = 2
 
@@ -36,7 +46,7 @@ class UpscalerService:
         self,
         input_frames: List[Path],
         output_dir: Path,
-        upscale_factor: int = 2,
+        upscale_factor: int = DEFAULT_UPSCALE_FACTOR,
         tile_size: int = 1024,
         tile_padding: int = 10,
         batch_size: Optional[int] = None,
@@ -48,7 +58,7 @@ class UpscalerService:
             logger.warning("No input frames provided for upscaling")
             return
 
-        if upscale_factor == 1:
+        if upscale_factor == SKIP_UPSCALE_FACTOR:
             logger.info(
                 "Upscale factor is 1x; skipping upscaling step and copying frames"
             )
@@ -76,15 +86,21 @@ class UpscalerService:
                     logger.error(f"Failed to copy frame {frame_path}: {e}")
             return
 
-        if upscale_factor != 2:
+        if upscale_factor not in MODEL_UPSCALE_FACTORS:
             logger.warning(
-                f"Unsupported upscale_factor={upscale_factor}. Falling back to 2x."
+                f"Unsupported upscale_factor={upscale_factor}. "
+                f"Falling back to {DEFAULT_UPSCALE_FACTOR}x."
             )
-            upscale_factor = 2
+            upscale_factor = DEFAULT_UPSCALE_FACTOR
 
         if batch_size is None:
             batch_size = DEFAULT_UPSCALE_BATCH_SIZE
         batch_size = max(1, batch_size)
+        batch_size = pixel_scaled_batch_size(
+            batch_size,
+            self._output_frame_pixels(input_frames[0], upscale_factor),
+            stage="upscale",
+        )
 
         logger.info(
             f"Upscaling {len(input_frames)} frames with factor {upscale_factor}x "
@@ -102,6 +118,8 @@ class UpscalerService:
             done = 0
 
             frame_cache: Dict[Path, np.ndarray] = {}
+            cache_bytes = 0
+            cache_full = False
             batch_iter = self._iter_size_batches(input_frames, batch_size)
 
             def _fetch_next(it):
@@ -121,7 +139,18 @@ class UpscalerService:
                     for path, up_img in zip(paths, upscaled):
                         output_path = output_dir / path.name
                         self._write_frame(output_path, up_img)
-                        frame_cache[output_path] = up_img
+
+                        if cache_bytes + up_img.nbytes <= FRAME_CACHE_MAX_BYTES:
+                            frame_cache[output_path] = up_img
+                            cache_bytes += up_img.nbytes
+                        elif not cache_full:
+                            cache_full = True
+                            logger.info(
+                                f"Frame cache budget reached at {len(frame_cache)} "
+                                f"frames ({cache_bytes / (1024 ** 3):.1f}GB); "
+                                f"remaining frames will be re-read from disk"
+                            )
+
                         last_img = up_img
 
                     done += len(current_batch)
@@ -142,6 +171,14 @@ class UpscalerService:
         except Exception as e:
             logger.error(f"Frame upscaling failed: {e}")
             raise RuntimeError(f"Upscaling process failed: {e}")
+
+    def _output_frame_pixels(self, sample_frame: Path, upscale_factor: int) -> int:
+        img = cv2.imread(str(sample_frame), cv2.IMREAD_COLOR)
+        if img is None:
+            logger.warning(f"Could not size sample frame: {sample_frame}")
+            return 0
+        h, w = img.shape[:2]
+        return h * w * upscale_factor * upscale_factor
 
     def _iter_size_batches(
         self, paths: List[Path], batch_size: int
@@ -219,14 +256,18 @@ class UpscalerService:
             return torch.cat((first, second), dim=0)
 
     def upscale_single_frame(
-        self, input_path: Path, output_path: Path, upscale_factor: int = 2
+        self,
+        input_path: Path,
+        output_path: Path,
+        upscale_factor: int = DEFAULT_UPSCALE_FACTOR,
     ) -> bool:
         try:
-            if upscale_factor != 2:
+            if upscale_factor not in MODEL_UPSCALE_FACTORS:
                 logger.warning(
-                    f"Unsupported upscale_factor={upscale_factor}. Falling back to 2x."
+                    f"Unsupported upscale_factor={upscale_factor}. "
+                    f"Falling back to {DEFAULT_UPSCALE_FACTOR}x."
                 )
-                upscale_factor = 2
+                upscale_factor = DEFAULT_UPSCALE_FACTOR
 
             upsampler = self.model_loader.load_realesrgan_model(upscale_factor)
 

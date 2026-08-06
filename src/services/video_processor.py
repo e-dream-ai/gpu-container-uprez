@@ -1,7 +1,8 @@
 import logging
 import os
+import shutil
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from services.model_loader import ModelLoader
 from services.frame_manager import FrameManager
@@ -9,8 +10,12 @@ from services.preview_encoder import PreviewService
 from services.upscaler_service import UpscalerService
 from services.interpolator_service import InterpolatorService
 from utils.cleanup_manager import CleanupManager
+from utils.input_validator import InputValidator
+from utils.upscale_config import DEFAULT_UPSCALE_FACTOR
 
 logger = logging.getLogger(__name__)
+
+DISK_HEADROOM_BYTES = 2 * (1024 ** 3)
 
 
 class VideoProcessorService:
@@ -26,10 +31,50 @@ class VideoProcessorService:
         
         logger.info("VideoProcessorService initialized")
 
+    def _check_capacity(
+        self,
+        video_info: Dict[str, Any],
+        upscale_factor: int,
+        interpolation_factor: int,
+        output_format: str,
+    ) -> None:
+        check = InputValidator.validate_processing_parameters(
+            video_info=video_info,
+            upscale_factor=upscale_factor,
+            interpolation_factor=interpolation_factor,
+            output_format=output_format,
+        )
+
+        for warning in check['warnings']:
+            logger.warning(f"Capacity: {warning}")
+
+        if not check['valid']:
+            raise ValueError("; ".join(check['errors']))
+
+        required = check['estimates'].get('estimated_frame_disk_bytes', 0)
+        if not required:
+            return
+
+        free = shutil.disk_usage(self.temp_dir).free
+        required_gb = required / (1024 ** 3)
+        free_gb = free / (1024 ** 3)
+        logger.info(
+            f"Frame storage estimate: {required_gb:.1f}GB needed, "
+            f"{free_gb:.1f}GB free in {self.temp_dir}"
+        )
+
+        if required + DISK_HEADROOM_BYTES > free:
+            raise RuntimeError(
+                f"Insufficient disk space for intermediate frames: "
+                f"~{required_gb:.1f}GB needed, {free_gb:.1f}GB free. "
+                f"Reduce upscale_factor ({upscale_factor}x), "
+                f"interpolation_factor ({interpolation_factor}x), or clip length."
+            )
+
     def process_video(
         self,
         input_path: Path,
-        upscale_factor: int = 2,
+        upscale_factor: int = DEFAULT_UPSCALE_FACTOR,
         interpolation_factor: int = 2,
         output_fps: int = 0,
         output_format: str = 'mp4',
@@ -54,7 +99,16 @@ class VideoProcessorService:
             
             update_progress(15.0)
             logger.info(f"Extracted {len(original_frame_paths)} frames")
-            
+
+            video_info = self.frame_manager.get_video_info(input_path)
+            video_info['frame_count'] = len(original_frame_paths)
+            self._check_capacity(
+                video_info=video_info,
+                upscale_factor=upscale_factor,
+                interpolation_factor=interpolation_factor,
+                output_format=output_format,
+            )
+
             logger.info("Step 2: Upscaling frames with Real-ESRGAN")
             upscaled_frames_dir = self.temp_dir / "frames_upscaled"
             upscaled_frames_dir.mkdir(exist_ok=True)
@@ -101,7 +155,6 @@ class VideoProcessorService:
             logger.info("Step 4: Encoding final video")
             output_path = self.temp_dir / f"output.{output_format}"
             
-            video_info = self.frame_manager.get_video_info(input_path)
             video_fps = video_info.get('fps', 30)
             source_fps = int(round(video_fps)) if isinstance(video_fps, (int, float)) else 30
             computed_fps = max(1, int(round(source_fps * max(1, interpolation_factor))))

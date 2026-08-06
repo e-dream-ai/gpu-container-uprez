@@ -5,6 +5,12 @@ from typing import Any, Dict
 
 import torch
 
+from utils.upscale_config import (
+    DEFAULT_UPSCALE_FACTOR,
+    MODEL_UPSCALE_FACTORS,
+    realesrgan_weight_path,
+)
+
 logger = logging.getLogger(__name__)
 
 FALSE_ENV_VALUES = {'0', 'false', 'no'}
@@ -13,11 +19,13 @@ _TORCH_COMPILE_MODE = os.getenv('TORCH_COMPILE_MODE', 'default')
 
 class ModelLoader:
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.device = self._get_device()
         self.loaded_models: Dict[str, Any] = {}
-        self.model_paths = {
-            'realesrgan': Path('/opt/models/realesrgan/RealESRGAN_x2plus.pth')
+        # Real-ESRGAN weights keyed by their native scale factor, from the
+        # shared config so the schema/validator/loader can never disagree.
+        self.realesrgan_paths: Dict[int, Path] = {
+            factor: realesrgan_weight_path(factor) for factor in MODEL_UPSCALE_FACTORS
         }
         logger.info(f"ModelLoader initialized with device: {self.device}")
     
@@ -33,25 +41,28 @@ class ModelLoader:
             return device
     
     def load_realesrgan_model(
-        self, 
-        upscale_factor: int = 2, 
-        tile_size: int = 1024, 
+        self,
+        upscale_factor: int = DEFAULT_UPSCALE_FACTOR,
+        tile_size: int = 1024,
         tile_padding: int = 10
     ) -> Any:
-        if upscale_factor != 2:
-            logger.warning(f"Unsupported upscale_factor={upscale_factor}. Falling back to 2x.")
-            upscale_factor = 2
+        if upscale_factor not in self.realesrgan_paths:
+            logger.warning(
+                f"Unsupported upscale_factor={upscale_factor}. "
+                f"Falling back to {DEFAULT_UPSCALE_FACTOR}x."
+            )
+            upscale_factor = DEFAULT_UPSCALE_FACTOR
 
         model_key = f'realesrgan_x{upscale_factor}'
-        
+
         if model_key in self.loaded_models:
             logger.debug(f"Real-ESRGAN model already loaded: {model_key}")
             return self.loaded_models[model_key]
-        
+
         try:
             from realesrgan import RealESRGANer
             from basicsr.archs.rrdbnet_arch import RRDBNet
-            
+
             logger.info(f"Loading Real-ESRGAN model: {model_key}")
 
             model = RRDBNet(
@@ -60,12 +71,12 @@ class ModelLoader:
                 num_feat=64,
                 num_block=23,
                 num_grow_ch=32,
-                scale=2
+                scale=upscale_factor
             )
-            model_path = self.model_paths['realesrgan']
-            
+            model_path = self.realesrgan_paths[upscale_factor]
+
             upsampler = RealESRGANer(
-                scale=2,
+                scale=upscale_factor,
                 model_path=str(model_path),
                 model=model,
                 tile=tile_size,

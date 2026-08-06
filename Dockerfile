@@ -27,7 +27,9 @@ RUN mkdir -p /opt/models/realesrgan /opt/models/rife /opt/app $TEMP_DIR
 
 # Download Real-ESRGAN weights only (RIFE code/weights are vendored locally)
 RUN wget -nv -O /opt/models/realesrgan/RealESRGAN_x2plus.pth \
-    https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth
+    https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth \
+    && wget -nv -O /opt/models/realesrgan/RealESRGAN_x4plus.pth \
+    https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
 
 # Set working directory
 WORKDIR /opt/app

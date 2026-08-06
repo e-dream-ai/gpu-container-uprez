@@ -15,7 +15,7 @@ Input Video → Frame Extraction → Real-ESRGAN Upscaling → RIFE Interpolatio
 ```json
 {
   "video_url": "https://example.com/input.mp4",
-  "upscale_factor": 2, // 2 only
+  "upscale_factor": 2, // 1 (skip), 2, or 4
   "interpolation_factor": 2, // 2, 4, or 8
   "output_fps": 30, // 1-120
   "output_format": "mp4" // mp4, webm, avi
@@ -70,7 +70,7 @@ docker build -t video-upscaler .
 
 ### Models Used
 
-- **Real-ESRGAN**: RealESRGAN_x2plus.pth
+- **Real-ESRGAN**: RealESRGAN_x2plus.pth (2x), RealESRGAN_x4plus.pth (4x)
 - **RIFE**: rife4.26.pth
 
 ### Memory Requirements
