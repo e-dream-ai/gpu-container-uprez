@@ -38,6 +38,13 @@ class VideoProcessorService:
         interpolation_factor: int,
         output_format: str,
     ) -> None:
+        if not video_info.get('width') or not video_info.get('height'):
+            logger.warning(
+                "Capacity checks skipped: could not determine source dimensions "
+                f"from {video_info}. Encoder and disk limits are unverified."
+            )
+            return
+
         check = InputValidator.validate_processing_parameters(
             video_info=video_info,
             upscale_factor=upscale_factor,
