@@ -23,6 +23,10 @@ TENSOR_CACHE_MAX_BYTES = int(
     float(os.getenv('RIFE_TENSOR_CACHE_MAX_GB', '8')) * (1024 ** 3)
 )
 
+MAX_PINNED_TENSOR_BYTES = int(
+    float(os.getenv('RIFE_MAX_PINNED_FRAME_MB', '64')) * (1024 ** 2)
+)
+
 TIMESTEPS = {
     2: [0.5],
     4: [0.25, 0.5, 0.75],
@@ -174,7 +178,10 @@ class InterpolatorService:
                     )
                     break
 
-                if _infer_device.type == 'cuda':
+                if (
+                    _infer_device.type == 'cuda'
+                    and tensor_bytes <= MAX_PINNED_TENSOR_BYTES
+                ):
                     t = t.pin_memory()
                 self._cpu_tensor_cache[idx] = t
                 cache_bytes += tensor_bytes

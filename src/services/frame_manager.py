@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 FALSE_ENV_VALUES = {'0', 'false', 'no'}
 FAST_PNG_COMPRESSION_LEVEL = 0
 NVENC_HEVC_ENCODER = 'hevc_nvenc'
+
+FFMPEG_DECODE_THREADS = max(1, int(os.getenv('FFMPEG_DECODE_THREADS', '4')))
+FFMPEG_ENCODE_THREADS = max(1, int(os.getenv('FFMPEG_ENCODE_THREADS', '4')))
 USE_HWACCEL_DECODE = os.getenv('USE_HWACCEL_DECODE', '1').lower() not in FALSE_ENV_VALUES
 
 
@@ -173,7 +176,12 @@ class FrameManager:
         total_frames: int,
         progress_callback: Optional[Callable[[int], None]] = None,
     ) -> None:
-        input_stream = ffmpeg.input(str(frame_pattern), framerate=fps, start_number=0)
+        input_stream = ffmpeg.input(
+            str(frame_pattern),
+            framerate=fps,
+            start_number=0,
+            threads=FFMPEG_DECODE_THREADS,
+        )
         output_stream = ffmpeg.output(
             input_stream,
             str(output_path),
@@ -256,35 +264,33 @@ class FrameManager:
         }
         
         settings = quality_settings.get(quality, quality_settings['high'])
-        
-        if format == 'mp4':
+
+        base = {'pix_fmt': 'yuv420p', 'threads': FFMPEG_ENCODE_THREADS}
+
+        if format == 'webm':
             return {
-                'vcodec': 'libx264',
-                'pix_fmt': 'yuv420p',
-                'crf': settings['crf'],
-                'preset': settings['preset'],
-                'movflags': '+faststart',
-            }
-        elif format == 'webm':
-            return {
+                **base,
                 'vcodec': 'libvpx-vp9',
-                'pix_fmt': 'yuv420p',
                 'crf': settings['crf'],
                 'b:v': '2M'
             }
-        elif format == 'avi':
+
+        if format == 'avi':
             return {
+                **base,
                 'vcodec': 'libx264',
-                'pix_fmt': 'yuv420p',
                 'crf': settings['crf']
             }
-        else:
-            return {
-                'vcodec': 'libx264',
-                'pix_fmt': 'yuv420p',
-                'crf': settings['crf'],
-                'preset': settings['preset']
-            }
+
+        params = {
+            **base,
+            'vcodec': 'libx264',
+            'crf': settings['crf'],
+            'preset': settings['preset'],
+        }
+        if format == 'mp4':
+            params['movflags'] = '+faststart'
+        return params
 
     def _supports_encoder(self, encoder_name: str) -> bool:
         try:
