@@ -2,7 +2,7 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -13,6 +13,7 @@ from tqdm import tqdm
 from services.model_loader import ModelLoader
 from services.preview_encoder import PreviewService
 from utils.frame_budget import pixel_scaled_batch_size
+from utils.video_types import ProgressCallback
 from utils.upscale_config import (
     DEFAULT_UPSCALE_FACTOR,
     MODEL_UPSCALE_FACTORS,
@@ -37,7 +38,7 @@ class UpscalerService:
         self,
         model_loader: ModelLoader,
         preview_service: PreviewService,
-    ):
+    ) -> None:
         self.model_loader = model_loader
         self.preview_service = preview_service
         logger.info("UpscalerService initialized")
@@ -50,7 +51,7 @@ class UpscalerService:
         tile_size: int = 1024,
         tile_padding: int = 10,
         batch_size: Optional[int] = None,
-        progress_callback: Callable[[int, Optional[str]], None] = None,
+        progress_callback: ProgressCallback | None = None,
         preview_max_side: Optional[int] = None,
         preview_jpeg_quality: Optional[int] = None,
     ) -> Optional[Dict[Path, np.ndarray]]:
@@ -66,8 +67,7 @@ class UpscalerService:
                 try:
                     img = cv2.imread(str(frame_path), cv2.IMREAD_COLOR)
                     if img is None:
-                        logger.warning(f"Could not read frame: {frame_path}")
-                        continue
+                        raise RuntimeError(f'Could not read frame: {frame_path}')
 
                     output_path = output_dir / frame_path.name
                     self._write_frame(output_path, img)
@@ -83,7 +83,7 @@ class UpscalerService:
                             preview_base64,
                         )
                 except Exception as e:
-                    logger.error(f"Failed to copy frame {frame_path}: {e}")
+                    raise RuntimeError(f'Failed to copy frame {frame_path}: {e}') from e
             return
 
         if upscale_factor not in MODEL_UPSCALE_FACTORS:
@@ -189,8 +189,7 @@ class UpscalerService:
         for path in paths:
             img = cv2.imread(str(path), cv2.IMREAD_COLOR)
             if img is None:
-                logger.warning(f"Could not read frame: {path}")
-                continue
+                raise RuntimeError(f'Could not read frame: {path}')
 
             shape = img.shape[:2]
             if batch and (len(batch) >= batch_size or shape != ref_shape):
@@ -285,10 +284,13 @@ class UpscalerService:
             logger.error(f"Failed to upscale frame {input_path}: {e}")
             return False
 
-    def _write_frame(self, output_path: Path, img) -> bool:
+    def _write_frame(self, output_path: Path, img: np.ndarray) -> None:
         if output_path.suffix.lower() == '.png':
-            return cv2.imwrite(str(output_path), img, FAST_PNG_WRITE_PARAMS)
-        return cv2.imwrite(str(output_path), img)
+            written = cv2.imwrite(str(output_path), img, FAST_PNG_WRITE_PARAMS)
+        else:
+            written = cv2.imwrite(str(output_path), img)
+        if not written:
+            raise RuntimeError(f'Failed to write upscaled frame: {output_path}')
 
     def get_output_dimensions(
         self, input_width: int, input_height: int, upscale_factor: int

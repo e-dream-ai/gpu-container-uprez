@@ -1,8 +1,9 @@
 import logging
 import os
+import shutil
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -12,6 +13,7 @@ from tqdm import tqdm
 from services.model_loader import ModelLoader
 from services.preview_encoder import PreviewService
 from utils.frame_budget import pixel_scaled_batch_size
+from utils.video_types import ProgressCallback
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ TIMESTEPS = {
 
 
 class InterpolatorService:
-    def __init__(self, model_loader: ModelLoader, preview_service: PreviewService):
+    def __init__(self, model_loader: ModelLoader, preview_service: PreviewService) -> None:
         self.model_loader = model_loader
         self.preview_service = preview_service
         self._target_size: Optional[Tuple[int, int]] = None
@@ -52,12 +54,18 @@ class InterpolatorService:
         interpolation_factor: int = 2,
         batch_size: Optional[int] = None,
         frame_cache: Optional[Dict[Path, np.ndarray]] = None,
-        progress_callback: Callable[[int, Optional[str]], None] = None,
+        progress_callback: ProgressCallback | None = None,
         preview_max_side: Optional[int] = None,
         preview_jpeg_quality: Optional[int] = None,
     ) -> None:
-        if len(input_frames) < 2:
-            logger.warning("Need at least 2 frames for interpolation")
+        if not input_frames:
+            raise ValueError('No input frames provided for interpolation')
+
+        if len(input_frames) == 1:
+            for index in range(interpolation_factor):
+                shutil.copyfile(input_frames[0], output_dir / f'frame_{index:06d}.png')
+            if progress_callback:
+                progress_callback(100, None)
             return
 
         if interpolation_factor == 1:
@@ -68,8 +76,7 @@ class InterpolatorService:
                 try:
                     img = cv2.imread(str(frame_path))
                     if img is None:
-                        logger.warning(f"Could not read frame: {frame_path}")
-                        continue
+                        raise RuntimeError(f'Could not read frame: {frame_path}')
 
                     output_path = output_dir / f"frame_{idx:06d}.png"
                     self._write_frame(output_path, img)
@@ -87,10 +94,8 @@ class InterpolatorService:
                             preview_base64,
                         )
                 except Exception as e:
-                    logger.error(f"Failed to copy frame {frame_path}: {e}")
+                    raise RuntimeError(f'Failed to copy frame {frame_path}: {e}') from e
             return
-
-        self._bgr_cache = frame_cache
 
         if batch_size is None:
             batch_size = DEFAULT_RIFE_BATCH_SIZE
@@ -101,12 +106,12 @@ class InterpolatorService:
             f"{interpolation_factor}x (batch_size={batch_size})"
         )
 
-        logger.info("Loading RIFE model...")
-        rife_model = self.model_loader.load_rife_model()
-        self._use_fp16 = bool(getattr(rife_model, 'use_fp16', False))
-        logger.info("RIFE model loaded successfully")
-
         try:
+            self._bgr_cache = frame_cache
+            logger.info('Loading RIFE model...')
+            rife_model = self.model_loader.load_rife_model()
+            self._use_fp16 = bool(getattr(rife_model, 'use_fp16', False))
+            logger.info('RIFE model loaded successfully')
             self._target_size = self._determine_safe_size(input_frames)
             if self._target_size is None:
                 raise RuntimeError(
@@ -228,12 +233,12 @@ class InterpolatorService:
                 logger.warning(
                     f"Generated fewer frames than expected: {len(actual_frames)} vs {desired_total_frames}"
                 )
-            self._bgr_cache = None
-            self._cpu_tensor_cache = None
-
         except Exception as e:
             logger.error(f"Frame interpolation failed: {e}")
             raise RuntimeError(f"Interpolation process failed: {e}")
+        finally:
+            self._bgr_cache = None
+            self._cpu_tensor_cache = None
 
     def _process_interpolation_chunk(
         self,
@@ -266,10 +271,7 @@ class InterpolatorService:
             if self._output_size is not None:
                 frame = self._resize_to_exact(frame, *self._output_size)
             output_path = output_dir / f"frame_{out_pos:06d}.png"
-            if not self._write_frame(output_path, frame):
-                raise RuntimeError(
-                    f"Failed to write interpolated frame to {output_path}"
-                )
+            self._write_frame(output_path, frame)
             last_frame_bgr = frame
 
         return last_frame_bgr
@@ -342,16 +344,20 @@ class InterpolatorService:
         frame = self._bgr_cache.get(source_path) if self._bgr_cache is not None else None
         if frame is None:
             frame = cv2.imread(str(source_path))
-        if frame is not None:
-            if self._output_size is not None:
-                out_h, out_w = self._output_size
-                frame = self._resize_to_exact(frame, out_h, out_w)
-            self._write_frame(output_path, frame)
+        if frame is None:
+            raise RuntimeError(f'Could not read frame: {source_path}')
+        if self._output_size is not None:
+            out_h, out_w = self._output_size
+            frame = self._resize_to_exact(frame, out_h, out_w)
+        self._write_frame(output_path, frame)
 
-    def _write_frame(self, output_path: Path, frame: np.ndarray) -> bool:
+    def _write_frame(self, output_path: Path, frame: np.ndarray) -> None:
         if output_path.suffix.lower() == '.png':
-            return cv2.imwrite(str(output_path), frame, FAST_PNG_WRITE_PARAMS)
-        return cv2.imwrite(str(output_path), frame)
+            written = cv2.imwrite(str(output_path), frame, FAST_PNG_WRITE_PARAMS)
+        else:
+            written = cv2.imwrite(str(output_path), frame)
+        if not written:
+            raise RuntimeError(f'Failed to write interpolated frame: {output_path}')
 
     def _determine_safe_size(self, frames: List[Path]) -> Optional[Tuple[int, int]]:
         max_h: Optional[int] = None
